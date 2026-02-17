@@ -45,15 +45,6 @@ This means the model generates speech approximately 7× faster than real-time pl
 
 ## Project Structure
 
-TTS_Project/
-│
-├── src/
-│ └── generate.py # Main speech generation script
-│
-├── outputs/ # Generated audio files (ignored by Git)
-│
-├── requirements.txt # Python dependencies
-└── README.md
 
 ---
 
@@ -61,36 +52,19 @@ TTS_Project/
 
 ### 1. Create Conda Environment
 
+```bash
 conda create -n tts python=3.10
 conda activate tts
-
-
-2. Install CUDA-enabled PyTorch
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-
-3. Install Coqui TTS
 pip install TTS
-
-4. Install eSpeak NG (Windows)
-Download and install eSpeak NG (required for phoneme support):
-https://github.com/espeak-ng/espeak-ng/releases
-
-Run
 python src/generate.py
 
 
-
-## Future Improvements
-
-- Add multilingual support (Mandarin + English)
-- Compare VITS vs FastSpeech2 architectures
-- CPU vs GPU latency benchmarking
-- Build a web interface (Streamlit)
-- Real-time streaming TTS
-
 ---
 
-## Author
+# 🚀 Then Run
 
-Jay Ma  
-GitHub: https://github.com/Jayyy101
+```powershell
+git add README.md
+git commit -m "Polish README formatting and clean structure"
+git push
