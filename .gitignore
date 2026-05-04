@@ -1,4 +1,8 @@
 __pycache__/
+*.pyc
 outputs/
 *.wav
 .env
+.venv/
+venv/
+.ipynb_checkpoints/

@@ -26,6 +26,8 @@ AVAILABLE_SPEAKERS = {
 
 DEFAULT_SPEED = 1.0
 
+MODEL_CACHE = {}
+
 
 def print_device_info():
     print("CUDA available:", torch.cuda.is_available())
@@ -51,7 +53,11 @@ def build_output_path(language):
 
 def load_model(language):
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    return TTS(language=language, device=device)
+
+    if language not in MODEL_CACHE:
+        MODEL_CACHE[language] = TTS(language=language, device=device)
+
+    return MODEL_CACHE[language]
 
 
 def validate_speaker(model, speaker_name):
