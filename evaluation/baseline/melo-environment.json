@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "captured_at_utc": "2026-09-13T08:51:50.233202+00:00",
+  "validation_status": {
+    "historical": "Existing system reported working by user; manual timings are in root README.md.",
+    "checked_this_milestone": [
+      "Installed package metadata",
+      "PyTorch import and CUDA availability",
+      "GPU identity and driver via nvidia-smi",
+      "Cached Melo checkpoint/config hashes"
+    ],
+    "not_checked": [
+      "Real synthesis",
+      "Listening quality",
+      "Fresh environment recreation",
+      "Complete offline dependency asset availability"
+    ]
+  },
+  "repository_baseline_commit": "07edc9507ee7d96a0a8685a839ffbec69e316cb0",
+  "source_sha256": {
+    "src/generate_melo.py": "65688b2ae4e42c9deb7f8ed9bd60cc5b024880da4fd9bc1067424c07ea3874b2",
+    "src/gui.py": "b8bae916253c6cda0bb60b765a37de3f70d372b43d395bffe155eec392035c78"
+  },
+  "runtime": {
+    "conda_environment": "melo",
+    "python": "3.10.20",
+    "python_build": "3.10.20 | packaged by Anaconda, Inc. | (main, Mar 11 2026, 17:42:35) [MSC v.1942 64 bit (AMD64)]",
+    "executable": "C:\\miniconda3\\envs\\melo\\python.exe",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "torch_cuda_build": "12.6",
+    "cudnn_version": 91002,
+    "cuda_available": true
+  },
+  "hardware": {
+    "gpu_observed": "NVIDIA GeForce RTX 4070 Ti SUPER, 16376 MiB, 591.86",
+    "cpu_documented_in_readme": "AMD Ryzen 7 7800X3D",
+    "ram_documented_in_readme": "32 GB",
+    "cpu_ram_verification_note": "Windows CIM queries were denied; CPU and RAM are historical README values, not newly measured."
+  },
+  "important_packages": {
+    "melotts": "0.1.2",
+    "torch": "2.11.0+cu126",
+    "torchaudio": "2.11.0+cu126",
+    "torchvision": "0.26.0+cu126",
+    "transformers": "4.27.4",
+    "huggingface-hub": "0.36.2",
+    "numpy": "1.26.4",
+    "soundfile": "0.13.1",
+    "librosa": "0.9.1",
+    "pypinyin": "0.50.0",
+    "jieba": "0.42.1",
+    "nltk": "3.9.4",
+    "numba": "0.65.0",
+    "pip": "26.0.1",
+    "setuptools": "70.2.0"
+  },
+  "melotts_install_source": {
+    "url": "https://github.com/myshell-ai/MeloTTS.git",
+    "vcs_info": {
+      "commit_id": "209145371cff8fc3bd60d7be902ea69cbdb7965a",
+      "vcs": "git"
+    }
+  },
+  "installed_melo_source_sha256": {
+    "api.py": "b3db89e57e3a67d4b21d3d434a5aab8f4b6b967a1c905bf0a560d2f877f2876e",
+    "download_utils.py": "8e8662667e572805680c5134426c94e6ea45cf082005737f86eeb0b9d772a135"
+  },
+  "relevant_environment_variables": {
+    "TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD": null,
+    "TORCH_FORCE_WEIGHTS_ONLY_LOAD": null,
+    "HF_HOME": null,
+    "HF_HUB_CACHE": null,
+    "HF_HUB_OFFLINE": null,
+    "TRANSFORMERS_OFFLINE": null,
+    "CUDA_VISIBLE_DEVICES": null
+  },
+  "cached_melo_assets": [
+    {
+      "model_id": "myshell-ai/MeloTTS-Chinese",
+      "cached_refs": {
+        "main": "af5d207a364ea4208c6f589c89f57f88414bdd16"
+      },
+      "cached_snapshots": [
+        {
+          "revision": "af5d207a364ea4208c6f589c89f57f88414bdd16",
+          "files": {
+            "checkpoint.pth": {
+              "bytes": 207770124,
+              "sha256": "a74e9eadffff065c75eb6dfa040efa72cad23e72cfea70d39190bc174fb97093"
+            },
+            "config.json": {
+              "bytes": 2296,
+              "sha256": "d58b5acdab89ad2bbd65325affab309ae3cb964834b02f9a60587474e81c8bb9"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "model_id": "myshell-ai/MeloTTS-English",
+      "cached_refs": {
+        "main": "bb4fb7346d566d277ba8c8c7dbfdf6786139b8ef"
+      },
+      "cached_snapshots": [
+        {
+          "revision": "bb4fb7346d566d277ba8c8c7dbfdf6786139b8ef",
+          "files": {
+            "checkpoint.pth": {
+              "bytes": 207860748,
+              "sha256": "acd278040eaf9536908e2b965273df5a731c44d8f0da66cc5fed7972772ed23c"
+            },
+            "config.json": {
+              "bytes": 3488,
+              "sha256": "039116c927c70eaa4458d315ea83aaaa99e1fca1c621b50c8ca56b4a5700eb77"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "asset_scope_note": "Inventory of existing default Hugging Face cache only; not proof these exact assets were used historically. Auxiliary tokenizer/BERT/NLTK assets are not fully inventoried.",
+  "baseline_behavior": {
+    "mandarin_language": "ZH",
+    "mandarin_speaker": "ZH",
+    "default_speed": 1.0,
+    "allowed_speed_range": [
+      0.8,
+      1.2
+    ],
+    "device_selection": "cuda:0 if CUDA is available, otherwise cpu",
+    "cache_scope": "one model per normalized language per process",
+    "blank_text": "substitute built-in sample",
+    "unknown_language": "fall back to EN",
+    "output": "outputs/melo_<language>_<local timestamp to seconds>.wav, relative to working directory",
+    "inference_time": "rounded wall time around tts_to_file; excludes imports and model loading"
+  },
+  "freeze_note": "Raw pip freeze --all inventory, not a validated lockfile. Includes a nonportable Conda build path for pip; Python, driver, CUDA wheel index, caches and non-pip components require separate preservation.",
+  "freeze_sha256": "809eb40fec815ea4649a290a3ba6ff79b262e8903488b8fa0ac2cfa727fa84ab"
+}
