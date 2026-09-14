@@ -2,7 +2,7 @@
 
 A locally controlled neural Text-to-Speech (TTS) system that converts English, Mandarin Chinese, and mixed Chinese-English text into speech using MeloTTS.
 
-This project started with an English VITS prototype, then expanded through XTTS and Azure Neural TTS testing. The final system uses MeloTTS as the main backend because it supports multilingual synthesis, runs locally, and integrates well with a custom Python GUI.
+This project started with an English VITS prototype, then expanded through XTTS and Azure Neural TTS testing. MeloTTS remains the preserved baseline and current legacy application backend. CosyVoice3 has completed an isolated WSL evaluation and is the selected foundation for continued development; it is not yet integrated into the GUI. See [Milestone B — CosyVoice Bring-Up](evaluation/COSYVOICE_MILESTONE_B.md) and the [project handoff](docs/PROJECT_STATE.md). Milestone C will address audiobook narration and prosody.
 
 ---
 
@@ -20,9 +20,9 @@ Azure Neural TTS was used only as a quality benchmark. XTTS was tested as a mult
 
 ---
 
-## Final System
+## Current Legacy Application
 
-The final system uses:
+The existing application uses:
 
 - **MeloTTS** as the main speech synthesis backend
 - **Tkinter** for the graphical user interface
@@ -48,8 +48,8 @@ src/
 ├── generate.py          # older English VITS baseline prototype
 ├── xtts.py              # XTTS multilingual experiment
 ├── generate_azure.py    # Azure Neural TTS benchmark
-├── generate_melo.py     # final MeloTTS backend
-└── gui.py               # Tkinter GUI for the final system
+├── generate_melo.py     # preserved MeloTTS backend
+└── gui.py               # existing Tkinter GUI (MeloTTS)
 ```
 
 ---

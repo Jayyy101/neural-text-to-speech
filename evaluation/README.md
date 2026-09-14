@@ -24,11 +24,11 @@ Listening judgments below come from the user's completed manual review; duration
 | Percent formatting | `100%` normalizes to `一百`, losing percentage meaning even though preprocessing succeeds. |
 | Numbers and special formatting | Require future normalization work; successful synthesis alone does not establish semantically correct readings. |
 
-### Baseline role and next milestone
+### Baseline role and subsequent milestones
 
 MeloTTS remains the original reproducible baseline for future comparisons and must not be assumed to be the final audiobook backend. The current environment, inputs, and synthesis behavior remain preserved; fresh-environment restoration is still unverified as noted below.
 
-Azure `zh-CN-XiaoxiaoNeural` remains the listening-quality reference for naturalness, pacing, pronunciation, and audiobook suitability. The next milestone will evaluate CosyVoice in a separate environment, without upgrading or replacing the existing `melo` environment.
+Azure `zh-CN-XiaoxiaoNeural` remains the listening-quality reference for naturalness, pacing, pronunciation, and audiobook suitability. [Milestone B — CosyVoice Bring-Up](COSYVOICE_MILESTONE_B.md) is complete in a separate WSL environment, with Melo preserved. CosyVoice3 is the selected experimental foundation; Milestone C — Audiobook Narration & Prosody Pipeline is next. The Milestone A findings and historical reproduction procedure below remain unchanged.
 
 ## Evidence and limits
 
