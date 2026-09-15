@@ -5,13 +5,39 @@ from pathlib import Path
 
 from .cosyvoice import CosyVoiceAdapter
 from .manifest import create_planning_run
-from .pipeline import GenerationError, generate_planned_run
+from .pipeline import (
+    GenerationError,
+    generate_planned_run,
+    regenerate_scene,
+    resume_generation,
+)
 from .planning import PlanningError
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_ROOT = REPOSITORY_ROOT / "outputs/audiobooks"
 DEFAULT_COSYVOICE_ROOT = Path.home() / "CosyVoice"
+
+
+def add_backend_options(command):
+    command.add_argument("run_directory", type=Path)
+    command.add_argument("--cosyvoice-root", type=Path, default=DEFAULT_COSYVOICE_ROOT)
+    command.add_argument("--model-dir", type=Path)
+    command.add_argument("--prompt-wav", type=Path)
+    command.add_argument("--prompt-text-file", type=Path)
+
+
+def create_adapter(args):
+    cosyvoice_root = args.cosyvoice_root.expanduser()
+    return CosyVoiceAdapter(
+        cosyvoice_root=cosyvoice_root,
+        model_dir=args.model_dir or cosyvoice_root / "pretrained_models/Fun-CosyVoice3-0.5B",
+        prompt_wav=args.prompt_wav or cosyvoice_root / "reference_audio/xiaoxiao_narrator_short.wav",
+        prompt_text_file=(
+            args.prompt_text_file
+            or cosyvoice_root / "reference_audio/xiaoxiao_narrator_short.txt"
+        ),
+    )
 
 
 def main(argv=None):
@@ -25,11 +51,16 @@ def main(argv=None):
     generate = commands.add_parser(
         "generate", help="Generate attempt_001 for an existing D1 planned run."
     )
-    generate.add_argument("run_directory", type=Path)
-    generate.add_argument("--cosyvoice-root", type=Path, default=DEFAULT_COSYVOICE_ROOT)
-    generate.add_argument("--model-dir", type=Path)
-    generate.add_argument("--prompt-wav", type=Path)
-    generate.add_argument("--prompt-text-file", type=Path)
+    add_backend_options(generate)
+    resume = commands.add_parser(
+        "resume", help="Generate one new attempt for each incomplete scene."
+    )
+    add_backend_options(resume)
+    regenerate = commands.add_parser(
+        "regenerate", help="Generate one new attempt for one scene."
+    )
+    add_backend_options(regenerate)
+    regenerate.add_argument("--scene-id", required=True)
     args = parser.parse_args(argv)
 
     if args.command == "plan":
@@ -45,21 +76,20 @@ def main(argv=None):
         print(f"Manifest: {run_dir / 'manifest.json'}")
         return 0
 
-    cosyvoice_root = args.cosyvoice_root.expanduser()
-    adapter = CosyVoiceAdapter(
-        cosyvoice_root=cosyvoice_root,
-        model_dir=args.model_dir or cosyvoice_root / "pretrained_models/Fun-CosyVoice3-0.5B",
-        prompt_wav=args.prompt_wav or cosyvoice_root / "reference_audio/xiaoxiao_narrator_short.wav",
-        prompt_text_file=(
-            args.prompt_text_file
-            or cosyvoice_root / "reference_audio/xiaoxiao_narrator_short.txt"
-        ),
-    )
+    adapter = create_adapter(args)
     try:
-        manifest = generate_planned_run(args.run_directory, adapter)
+        if args.command == "generate":
+            manifest = generate_planned_run(args.run_directory, adapter)
+        elif args.command == "resume":
+            manifest = resume_generation(args.run_directory, adapter)
+        else:
+            manifest = regenerate_scene(
+                args.run_directory, args.scene_id, adapter
+            )
     except (GenerationError, OSError) as error:
         parser.error(str(error))
-    summary = manifest["generation"].get("summary")
+    generation_state = manifest["generation"]
+    summary = generation_state.get("summary")
     if summary:
         print(
             f"Generated {summary['generated_scenes']} of {summary['total_scenes']} "
@@ -67,8 +97,17 @@ def main(argv=None):
         )
     else:
         print("CosyVoice initialization failed; no scenes were generated.")
+    operation = generation_state.get("last_operation")
+    if operation:
+        print(
+            f"{operation['type']}: {operation['status']}; "
+            f"attempted {operation['attempted_scenes']} scene(s)."
+        )
     print(f"Manifest: {Path(args.run_directory).expanduser().resolve() / 'manifest.json'}")
-    return int(manifest["status"] != "generated")
+    return int(
+        manifest["status"] != "generated"
+        or (operation is not None and operation["status"] == "failed")
+    )
 
 
 if __name__ == "__main__":

@@ -80,16 +80,18 @@ class AudiobookGenerationTests(unittest.TestCase):
         ]
         self.assertEqual([call[1] for call in backend.calls], expected)
         self.assertTrue(all(path.is_file() for path in expected))
-        self.assertEqual(manifest["schema_version"], 2)
+        self.assertEqual(manifest["schema_version"], 3)
         self.assertEqual(manifest["status"], "generated")
         self.assertEqual(manifest["generation"]["summary"], {
             "generated_scenes": 3, "failed_scenes": 0, "total_scenes": 3,
         })
         for index, scene in enumerate(manifest["scenes"], 1):
             generation = scene["generation"]
-            attempt = generation["attempt"]
+            attempt = generation["attempts"][0]
             self.assertEqual(generation["status"], "generated")
+            self.assertEqual(generation["selected_attempt_id"], "attempt_001")
             self.assertEqual(attempt["id"], "attempt_001")
+            self.assertEqual(attempt["status"], "generated")
             self.assertEqual(
                 attempt["output_path"],
                 f"scenes/scene_{index:04d}/attempt_001/generated.wav",
@@ -110,9 +112,11 @@ class AudiobookGenerationTests(unittest.TestCase):
         self.assertEqual(manifest["generation"]["summary"]["failed_scenes"], 1)
         failed = manifest["scenes"][1]["generation"]
         self.assertEqual(failed["status"], "failed")
-        self.assertEqual(failed["attempt"]["id"], "attempt_001")
-        self.assertEqual(failed["attempt"]["error"]["type"], "RuntimeError")
-        self.assertIn("synthetic generation failure", failed["attempt"]["error"]["message"])
+        self.assertIsNone(failed["selected_attempt_id"])
+        self.assertEqual(failed["attempts"][0]["id"], "attempt_001")
+        self.assertEqual(failed["attempts"][0]["status"], "failed")
+        self.assertEqual(failed["attempts"][0]["error"]["type"], "RuntimeError")
+        self.assertIn("synthetic generation failure", failed["attempts"][0]["error"]["message"])
         serialized = json.dumps(manifest)
         for forbidden in ("attempt_002", "retry", "repair", "assembly", "listening"):
             self.assertNotIn(forbidden, serialized)
@@ -121,7 +125,7 @@ class AudiobookGenerationTests(unittest.TestCase):
         manifest = self.generate(FakeBackend(invalid_text="场景甲。\n"))
         first = manifest["scenes"][0]["generation"]
         self.assertEqual(first["status"], "failed")
-        self.assertIn(first["attempt"]["error"]["type"], {"Error", "EOFError"})
+        self.assertIn(first["attempts"][0]["error"]["type"], {"Error", "EOFError"})
         self.assertEqual(manifest["generation"]["summary"]["failed_scenes"], 1)
 
     def test_wav_validation_rejects_empty_wrong_rate_channels_and_width(self):
@@ -164,8 +168,8 @@ class AudiobookGenerationTests(unittest.TestCase):
             cwd=ROOT, text=True, capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("{plan,generate}", result.stdout)
-        for command in ("regenerate", "repair", "assemble", "resume"):
+        self.assertIn("{plan,generate,resume,regenerate}", result.stdout)
+        for command in ("repair", "assemble", "flag"):
             self.assertNotIn(command, result.stdout)
 
 
