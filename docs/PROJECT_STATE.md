@@ -4,7 +4,7 @@
 
 Build a high-quality local Mandarin audiobook system for long Chinese web novels, keeping one narrator consistent across chapters. Priorities are naturalness, faithful pronunciation, controllable pacing, and reliable long-text generation. Azure `zh-CN-XiaoxiaoNeural` is the listening-quality reference, not an exact voice-reproduction target.
 
-Current development branch: **`v2-development`**. Milestone A was committed and pushed as **`e6f8197` — Complete MeloTTS baseline evaluation milestone**. **Milestone B is complete**; its closeout changes are not yet committed. Milestone C is the next active milestone; its pipeline features are not implemented yet.
+Current development branch: **`v2-development`**. Milestone A was committed and pushed as **`e6f8197` — Complete MeloTTS baseline evaluation milestone**. Milestone B was committed and pushed as **`eddd3c0` — Complete Milestone B CosyVoice evaluation**. **Milestone C is complete and awaiting review/commit.**
 
 ## Completed milestone: A — Capture the MeloTTS baseline
 
@@ -46,7 +46,7 @@ Full versions, source/checkpoint hashes, and capture limitations: [melo-environm
 ## Decisions and model strategy
 
 - Keep the original MeloTTS implementation, environment, and benchmark evidence for reproducible comparisons.
-- **CosyVoice3 (`Fun-CosyVoice3-0.5B-2512`) is the selected experimental foundation** for continued development. Melo remains the historical baseline and current legacy application backend; CosyVoice is not integrated into the GUI.
+- **CosyVoice3 (`Fun-CosyVoice3-0.5B-2512`) is the selected foundation** for continued production-pipeline development. Melo remains the historical baseline and current legacy application backend; CosyVoice is not integrated into the GUI.
 - Narrator identity is satisfactory with the preferred approximately 9.8-second Xiaoxiao-style reference. Milestone B model/voice searching is closed.
 - Use the same diagnostic source text across models and record model-specific settings. Keep Azure Xiaoxiao as the quality reference for naturalness, pacing, pronunciation, and audiobook suitability.
 - Choose the final backend through evidence, including narrator consistency and sustained listening, rather than GUI integration or short demos alone.
@@ -62,8 +62,21 @@ Full versions, source/checkpoint hashes, and capture limitations: [melo-environm
 
 Full findings, setup provenance limits, historical float-WAV compatibility failure, reference comparison, and reproduction: [COSYVOICE_MILESTONE_B.md](../evaluation/COSYVOICE_MILESTONE_B.md). Measured run: [manifest.json](../outputs/evaluation/cosyvoice_baseline_2026-09-13_15-34-53/manifest.json) (local, Git-ignored). The closeout runner adds reference CLI/provenance and clearer failure accounting; historical manifests remain unchanged. No new test suite or closeout GPU rerun.
 
-## Next active milestone: C — Audiobook Narration & Prosody Pipeline
+## Completed milestone: C — Audiobook Narration & Prosody Pipeline
 
-Scope: sentence-ending pause behavior, paragraph/scene pauses, pacing, semantic/narration-aware segmentation, long-form continuity, dialogue handling, repetition detection/prevention, and eventual pronunciation controls. No Milestone C behavior was added during B closeout.
+- Coherent-passage generation remains preferred. Hard sentence-by-sentence generation produced undesirable performance resets, while whitespace/newlines did not reliably control prosody.
+- A targeted **140 ms** silence addition improved deficient or borderline period pauses without materially changing already-good pauses. Multiple repairs remained natural.
+- [repair_pause.py](../evaluation/repair_pause.py) performs sample-preserving quiet-valley insertion near a supplied timestamp; [apply_pause_plan.py](../evaluation/apply_pause_plan.py) safely applies manual multi-boundary plans against original-audio coordinates.
+- Separately generated scenes retained narrator identity and joined without awkwardness or artifacts. In the final user listening comparison, **0 ms of extra inserted silence was preferred**; 700 and 1000 ms both felt too long. Zero extra silence preserves the natural trailing and leading silence already present in the two generated clips.
+- Production scene policy: join separately generated scenes with 0 ms added silence by default and add silence only when listening to that specific join justifies it.
+- Artifact/repetition policy: flag and regenerate the affected semantic chunk with the same narrator/settings; do not build or apply a complex waveform-repair model during this milestone.
+- The quiet-region heuristic missed a known boundary by approximately 398 ms. The Mandarin CTC experiment missed it by approximately 657 ms despite correct slice timing, resampling, and frame-spacing mechanics. Both remain evaluation-only; automatic alignment is deferred.
+- **90/90 model-free tests passed** in the isolated WSL `tts-align` environment after the closeout documentation changes on 2026-09-15. No model or GPU synthesis was invoked by this suite.
 
-Begin by reading [AGENTS.md](../AGENTS.md), this handoff, and the Milestone B record; verify branch/worktree and available evidence. Explain a scoped pipeline experiment before implementation. Keep the selected narrator, original corpus, and old outputs intact; record new evidence separately. Preserve the `melo` environment, baseline backend/GUI, and external CosyVoice source/model files unless later work explicitly authorizes changes. Do not commit or push without explicit instruction.
+Full findings, exact scene-break text, user listening judgments, production/evaluation boundaries, rejected alignment results, and future work: [COSYVOICE_MILESTONE_C.md](../evaluation/COSYVOICE_MILESTONE_C.md).
+
+## Next development work
+
+Build the non-GUI production audiobook runner around the validated policies: semantic chunking, deterministic scene concatenation, manifests, bounded regeneration, resume support, chapter assembly, and pronunciation/normalization controls. Validate full chapters before GUI integration. Automatic punctuation alignment is separate future research, not a prerequisite.
+
+Begin by reading [AGENTS.md](../AGENTS.md), this handoff, and the Milestone C record; verify branch/worktree and available evidence. Keep the selected narrator, original corpus, and old outputs intact; record new evidence separately. Preserve the `melo` environment, baseline backend/GUI, and external CosyVoice source/model files unless later work explicitly authorizes changes. Do not commit or push without explicit instruction.

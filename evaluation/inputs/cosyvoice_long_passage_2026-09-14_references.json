@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "source": {
+    "run_id": "cosyvoice_baseline_2026-09-14_00-54-53",
+    "audio_filename": "long_passage_01.wav",
+    "coordinate_system": "original_input_wav_seconds",
+    "provenance": "Approximate manually validated useful pause boundaries supplied by the user. Evaluation only; never matching inputs. Context ends at the target punctuation and must occur exactly once within its chunk."
+  },
+  "references": [
+    {"chunk_index": 5, "context": "而是二十七年前。", "seconds": 63.1949},
+    {"chunk_index": 6, "context": "留下的纸边很新，与泛黄的封面并不相称。", "seconds": 81.2680},
+    {"chunk_index": 6, "context": "不要在钟响以前打开北门。", "seconds": 89.6331},
+    {"chunk_index": 7, "context": "也许只是旧仓库的规矩。", "seconds": 95.6083},
+    {"chunk_index": 7, "context": "可他自己也觉得这个解释过于轻巧。", "seconds": 99.8948}
+  ]
+}

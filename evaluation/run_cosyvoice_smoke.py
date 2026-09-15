@@ -1,4 +1,4 @@
-"""Opt-in CosyVoice3 diagnostic smoke test for the Mandarin audiobook corpus."""
+"""Opt-in CosyVoice3 smoke test for the Mandarin diagnostic corpus or custom text."""
 
 import argparse
 from datetime import datetime, timezone
@@ -123,6 +123,13 @@ def main(argv=None):
         action="store_true",
         help="Run all seven diagnostic cases.",
     )
+    selection.add_argument(
+        "--text", help="Synthesize custom text instead of a diagnostic case.",
+    )
+    selection.add_argument(
+        "--text-file", type=Path,
+        help="Read custom text from a UTF-8 file, preserving punctuation and newlines.",
+    )
 
     parser.add_argument(
         "--repeat",
@@ -156,10 +163,21 @@ def main(argv=None):
             and args.prompt_text is None and transcript_file is None):
         parser.error("A custom --prompt-wav requires --prompt-text or --prompt-text-file")
 
-    cases = [
-        c for c in corpus["cases"]
-        if args.all or c["id"] == (args.case or "narration")
-    ]
+    custom_text = args.text
+    if args.text_file is not None:
+        try:
+            custom_text = args.text_file.expanduser().read_bytes().decode("utf-8")
+        except (OSError, UnicodeError) as error:
+            parser.error(f"Cannot read --text-file as UTF-8: {error}")
+    if custom_text is not None:
+        if not custom_text.strip():
+            parser.error("Custom text must not be empty or whitespace-only.")
+        cases = [{"id": "custom_text", "category": "custom_text", "text": custom_text}]
+    else:
+        cases = [
+            c for c in corpus["cases"]
+            if args.all or c["id"] == (args.case or "narration")
+        ]
 
     run_dir = create_run_directory(
         ROOT / "outputs/evaluation"
@@ -175,7 +193,7 @@ def main(argv=None):
         "python": platform.python_version(),
         "python_executable": sys.executable,
         "platform": platform.platform(),
-        "corpus_id": corpus["corpus_id"],
+        "corpus_id": corpus["corpus_id"] if custom_text is None else None,
         "cosyvoice_repo": str(COSYVOICE_ROOT),
         "model_dir": str(MODEL_DIR),
         "prompt_wav": str(prompt_wav),
@@ -189,7 +207,8 @@ def main(argv=None):
         "repeats": args.repeat,
         "records": plan_trials(cases, args.repeat),
         "notes": [
-            "Same Mandarin diagnostic corpus as Melo baseline.",
+            ("Same Mandarin diagnostic corpus as Melo baseline."
+             if custom_text is None else "Custom text experiment; not a diagnostic corpus run."),
             "Model is loaded once per benchmark run.",
             "No application-level text chunking is added.",
             "All chunks yielded internally by CosyVoice are concatenated in order.",
@@ -219,7 +238,7 @@ def main(argv=None):
     print("Results:", run_dir)
 
     try:
-        manifest["corpus_sha256"] = file_hash(CORPUS)
+        manifest["corpus_sha256"] = file_hash(CORPUS) if custom_text is None else None
         manifest["runner_sha256"] = file_hash(Path(__file__))
         prompt_transcript = (
             transcript_file.read_text(encoding="utf-8-sig")

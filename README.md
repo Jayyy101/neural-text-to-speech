@@ -2,7 +2,7 @@
 
 A locally controlled neural Text-to-Speech (TTS) system that converts English, Mandarin Chinese, and mixed Chinese-English text into speech using MeloTTS.
 
-This project started with an English VITS prototype, then expanded through XTTS and Azure Neural TTS testing. MeloTTS remains the preserved baseline and current legacy application backend. CosyVoice3 has completed an isolated WSL evaluation and is the selected foundation for continued development; it is not yet integrated into the GUI. See [Milestone B — CosyVoice Bring-Up](evaluation/COSYVOICE_MILESTONE_B.md) and the [project handoff](docs/PROJECT_STATE.md). Milestone C will address audiobook narration and prosody.
+This project started with an English VITS prototype, then expanded through XTTS and Azure Neural TTS testing. MeloTTS remains the preserved baseline and current legacy application backend. CosyVoice3 has completed isolated WSL evaluation and audiobook-prosody experiments and is the selected foundation for continued development; it is not yet integrated into the GUI. See [Milestone B — CosyVoice Bring-Up](evaluation/COSYVOICE_MILESTONE_B.md), [Milestone C — Audiobook Narration & Prosody Pipeline](evaluation/COSYVOICE_MILESTONE_C.md), and the [project handoff](docs/PROJECT_STATE.md).
 
 ---
 

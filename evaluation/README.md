@@ -28,7 +28,7 @@ Listening judgments below come from the user's completed manual review; duration
 
 MeloTTS remains the original reproducible baseline for future comparisons and must not be assumed to be the final audiobook backend. The current environment, inputs, and synthesis behavior remain preserved; fresh-environment restoration is still unverified as noted below.
 
-Azure `zh-CN-XiaoxiaoNeural` remains the listening-quality reference for naturalness, pacing, pronunciation, and audiobook suitability. [Milestone B — CosyVoice Bring-Up](COSYVOICE_MILESTONE_B.md) is complete in a separate WSL environment, with Melo preserved. CosyVoice3 is the selected experimental foundation; Milestone C — Audiobook Narration & Prosody Pipeline is next. The Milestone A findings and historical reproduction procedure below remain unchanged.
+Azure `zh-CN-XiaoxiaoNeural` remains the listening-quality reference for naturalness, pacing, pronunciation, and audiobook suitability. [Milestone B — CosyVoice Bring-Up](COSYVOICE_MILESTONE_B.md) is complete in a separate WSL environment, with Melo preserved. [Milestone C — Audiobook Narration & Prosody Pipeline](COSYVOICE_MILESTONE_C.md) is also complete: it establishes production-oriented scene and pause policies, validates manual quiet-valley pause repair, and defers inaccurate automatic alignment experiments. CosyVoice3 is the selected foundation for production-pipeline development. The Milestone A findings and historical reproduction procedure below remain unchanged.
 
 ## Evidence and limits
 

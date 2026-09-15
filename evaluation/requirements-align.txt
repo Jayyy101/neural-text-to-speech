@@ -1,0 +1,11 @@
+# Isolated WSL tts-align environment; Python 3.10.21.
+# Install torch separately from https://download.pytorch.org/whl/cu124
+# with torch==2.6.0 to reproduce the verified 2.6.0+cu124 build.
+# This file does not choose or replace a CUDA build automatically.
+# Do not install into cosyvoice-b or the legacy melo environment.
+torch==2.6.0
+numpy==1.26.4
+scipy==1.15.3
+soundfile==0.14.0
+transformers==5.17.0
+ctc-segmentation==1.7.4
