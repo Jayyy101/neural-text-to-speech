@@ -6,26 +6,33 @@ import hashlib
 import json
 from pathlib import Path
 import platform
-import subprocess
 import sys
 import time
 import traceback
-import wave
-
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.audiobook.cosyvoice import (
+    PROMPT_PREFIX,
+    create_cosyvoice_model,
+    file_sha256 as file_hash,
+    git_head,
+    infer_zero_shot,
+    load_cosyvoice_runtime,
+    normalize_prompt_transcript,
+    wav_info,
+    write_pcm16_wav,
+)
+
 CORPUS = ROOT / "evaluation/inputs/mandarin_diagnostics.json"
 
 COSYVOICE_ROOT = Path.home() / "CosyVoice"
 MODEL_DIR = COSYVOICE_ROOT / "pretrained_models/Fun-CosyVoice3-0.5B"
 PROMPT_WAV = COSYVOICE_ROOT / "asset/zero_shot_prompt.wav"
 
-PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
 PROMPT_TRANSCRIPT = "希望你以后能够做的比我还好呦。"
-
-
-def file_hash(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def create_run_directory(parent, now=None):
@@ -44,16 +51,6 @@ def create_run_directory(parent, now=None):
             return candidate.resolve()
         except FileExistsError:
             number += 1
-
-
-def git_head(repo):
-    try:
-        return subprocess.check_output(
-            ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            text=True,
-        ).strip()
-    except Exception:
-        return None
 
 
 def plan_trials(cases, repeats):
@@ -80,32 +77,6 @@ def plan_trials(cases, repeats):
             })
 
     return records
-
-
-def wav_info(path, expected_rate):
-    with wave.open(str(path), "rb") as audio:
-        frames = audio.getnframes()
-        rate = audio.getframerate()
-
-        if frames <= 0 or rate <= 0:
-            raise ValueError("Synthesis returned an empty WAV.")
-        if (rate != expected_rate or audio.getnchannels() != 1
-                or audio.getsampwidth() != 2 or audio.getcomptype() != "NONE"):
-            raise ValueError("Expected mono PCM16 WAV at the model sample rate.")
-        remaining = frames
-        while remaining:
-            count = min(remaining, 65536)
-            if len(audio.readframes(count)) != count * 2:
-                raise ValueError("Synthesis returned a truncated WAV.")
-            remaining -= count
-
-        return {
-            "sample_rate_hz": rate,
-            "channels": audio.getnchannels(),
-            "sample_width_bytes": audio.getsampwidth(),
-            "frames": frames,
-            "duration_seconds": frames / rate,
-        }
 
 
 def main(argv=None):
@@ -240,16 +211,11 @@ def main(argv=None):
     try:
         manifest["corpus_sha256"] = file_hash(CORPUS) if custom_text is None else None
         manifest["runner_sha256"] = file_hash(Path(__file__))
-        prompt_transcript = (
+        prompt_transcript = normalize_prompt_transcript((
             transcript_file.read_text(encoding="utf-8-sig")
             if transcript_file else
             (args.prompt_text if args.prompt_text is not None else PROMPT_TRANSCRIPT)
-        ).strip()
-        # Accept an already-prefixed transcript without duplicating the prefix.
-        if prompt_transcript.startswith(PROMPT_PREFIX):
-            prompt_transcript = prompt_transcript[len(PROMPT_PREFIX):].strip()
-        if not prompt_transcript or "<|endofprompt|>" in prompt_transcript:
-            raise ValueError("Provide a non-empty reference transcript without embedded prompt delimiters.")
+        ))
         prompt_text = PROMPT_PREFIX + prompt_transcript
         manifest["prompt_transcript"] = prompt_transcript
         manifest["prompt_transcript_sha256"] = hashlib.sha256(
@@ -268,7 +234,7 @@ def main(argv=None):
 
         import_started = time.perf_counter()
 
-        import torch
+        torch, torchaudio, AutoModel = load_cosyvoice_runtime(COSYVOICE_ROOT)
         manifest["torch_version"] = torch.__version__
         manifest["cuda"] = {
             "available": torch.cuda.is_available(),
@@ -276,16 +242,7 @@ def main(argv=None):
         }
         if torch.cuda.is_available():
             manifest["cuda"]["device"] = torch.cuda.get_device_name(0)
-        import torchaudio
         manifest["torchaudio_version"] = torchaudio.__version__
-
-        sys.path.insert(
-            0,
-            str(COSYVOICE_ROOT / "third_party/Matcha-TTS"),
-        )
-        sys.path.insert(0, str(COSYVOICE_ROOT))
-
-        from cosyvoice.cli.cosyvoice import AutoModel
 
         if not torch.cuda.is_available():
             raise RuntimeError(
@@ -301,12 +258,7 @@ def main(argv=None):
 
         load_started = time.perf_counter()
 
-        model = AutoModel(
-            model_dir=str(MODEL_DIR),
-            load_trt=False,
-            load_vllm=False,
-            fp16=False,
-        )
+        model = create_cosyvoice_model(AutoModel, MODEL_DIR, manifest["settings"])
 
         manifest["model_load_seconds"] = (
             time.perf_counter() - load_started
@@ -339,22 +291,10 @@ def main(argv=None):
 
                 inference_started = time.perf_counter()
 
-                chunks = []
-
-                for output in model.inference_zero_shot(
-                    record["text"],
-                    prompt_text,
-                    str(prompt_wav),
+                speech, chunk_count = infer_zero_shot(
+                    model, torch, record["text"], prompt_text, prompt_wav,
                     stream=False,
-                ):
-                    chunks.append(output["tts_speech"])
-
-                if not chunks:
-                    raise RuntimeError(
-                        "CosyVoice yielded no audio chunks."
-                    )
-
-                speech = torch.cat(chunks, dim=1)
+                )
 
                 if torch.cuda.is_available():
                     torch.cuda.synchronize()
@@ -369,13 +309,7 @@ def main(argv=None):
                     / record["expected_output_filename"]
                 )
 
-                torchaudio.save(
-                    str(output_path),
-                    speech.cpu(),
-                    model.sample_rate,
-                    encoding="PCM_S",
-                    bits_per_sample=16,
-                )
+                write_pcm16_wav(torchaudio, output_path, speech, model.sample_rate)
 
                 audio = wav_info(output_path, model.sample_rate)
 
@@ -387,7 +321,7 @@ def main(argv=None):
                         file_hash(output_path),
                     "audio": audio,
                     "cosyvoice_chunks":
-                        len(chunks),
+                        chunk_count,
                     "inference_seconds":
                         inference_seconds,
                     "rtf":
