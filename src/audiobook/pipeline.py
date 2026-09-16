@@ -12,9 +12,10 @@ from .cosyvoice import file_sha256, wav_info
 from .planning import build_plan
 
 
-GENERATION_SCHEMA_VERSION = 3
+GENERATION_SCHEMA_VERSION = 4
 FIRST_ATTEMPT_ID = "attempt_001"
 ATTEMPT_PATTERN = re.compile(r"^attempt_([0-9]{3,})$")
+REPAIR_PATTERN = re.compile(r"^repair_([0-9]{3,})$")
 PLANNING_SCENE_KEYS = (
     "id", "order", "source_span", "narration_text", "text_sha256",
 )
@@ -175,15 +176,40 @@ def validate_attempt_history(scene):
     return generation
 
 
+def validate_repair_history(scene):
+    repair_state = scene.get("repair")
+    if repair_state is None:
+        return
+    if not isinstance(repair_state, dict) or not isinstance(
+            repair_state.get("repairs"), list):
+        raise GenerationError(f"{scene['id']} has invalid repair state.")
+    previous_number = 0
+    seen = set()
+    for repair in repair_state["repairs"]:
+        repair_id = repair.get("id") if isinstance(repair, dict) else None
+        match = REPAIR_PATTERN.fullmatch(repair_id) if isinstance(repair_id, str) else None
+        if not match:
+            raise GenerationError(f"{scene['id']} contains an invalid repair ID.")
+        number = int(match.group(1))
+        if number <= previous_number or repair_id in seen:
+            raise GenerationError(f"{scene['id']} repair IDs must increase monotonically.")
+        previous_number = number
+        seen.add(repair_id)
+    selected = repair_state.get("selected_repair_id")
+    if selected is not None and selected not in seen:
+        raise GenerationError(f"{scene['id']} selected repair does not exist.")
+
+
 def load_generation_run(run_directory):
     run_directory, manifest_path, manifest = read_manifest(run_directory)
-    if manifest.get("schema_version") not in {2, GENERATION_SCHEMA_VERSION}:
-        raise GenerationError("Recovery requires a schema-version 2 or 3 generation run.")
+    if manifest.get("schema_version") not in {2, 3, GENERATION_SCHEMA_VERSION}:
+        raise GenerationError("Operation requires a schema-version 2, 3, or 4 generation run.")
     if not isinstance(manifest.get("generation"), dict):
         raise GenerationError("Manifest has invalid run generation metadata.")
     scenes = validate_plan_identity(run_directory, manifest)
     for scene in scenes:
         validate_attempt_history(scene)
+        validate_repair_history(scene)
     manifest["schema_version"] = GENERATION_SCHEMA_VERSION
     return run_directory, manifest_path, manifest
 
@@ -219,11 +245,34 @@ def selected_attempt(scene):
     raise GenerationError(f"{scene['id']} selected attempt does not exist.")
 
 
-def invalidate_selected(scene, attempt, reason):
+def mark_assembly_stale(manifest, reason):
+    assembly = manifest.get("assembly")
+    if isinstance(assembly, dict) and assembly.get("status") == "assembled":
+        assembly["status"] = "stale"
+        assembly["stale_reason"] = reason
+
+
+def selected_attempt_changed(manifest, scene, previous_attempt_id, next_attempt_id):
+    if previous_attempt_id == next_attempt_id:
+        return
+    repair_state = scene.get("repair")
+    if isinstance(repair_state, dict):
+        repair_state["selected_repair_id"] = None
+    mark_assembly_stale(
+        manifest,
+        f"{scene['id']} selected attempt changed from "
+        f"{previous_attempt_id or 'none'} to {next_attempt_id or 'none'}.",
+    )
+
+
+def invalidate_selected(scene, attempt, reason, manifest=None):
+    previous_attempt_id = scene["generation"]["selected_attempt_id"]
     attempt["artifact_status"] = "invalid"
     attempt["artifact_error"] = reason
     scene["generation"]["selected_attempt_id"] = None
     scene["generation"]["status"] = "incomplete"
+    if manifest is not None:
+        selected_attempt_changed(manifest, scene, previous_attempt_id, None)
 
 
 def next_attempt_id(scene):
@@ -284,6 +333,7 @@ def validate_next_attempt_paths(run_directory, scenes):
 
 def run_attempt(run_directory, manifest_path, manifest, scene, backend, expected_rate, clock):
     generation = scene["generation"]
+    previous_attempt_id = generation["selected_attempt_id"]
     attempt_id = next_attempt_id(scene)
     output_path = run_directory / attempt_output_path(scene["id"], attempt_id)
     attempt = {
@@ -310,6 +360,7 @@ def run_attempt(run_directory, manifest_path, manifest, scene, backend, expected
                 attempt[key] = result[key]
         generation["selected_attempt_id"] = attempt_id
         generation["status"] = "generated"
+        selected_attempt_changed(manifest, scene, previous_attempt_id, attempt_id)
         succeeded = True
     except Exception as error:
         attempt.update({
@@ -428,7 +479,7 @@ def resume_generation(run_directory, backend, clock=utc_now):
             valid, reason = validate_attempt_artifact(run_directory, selected, expected_rate)
             if valid:
                 continue
-            invalidate_selected(scene, selected, reason)
+            invalidate_selected(scene, selected, reason, manifest)
         targets.append(scene)
 
     validate_next_attempt_paths(run_directory, targets)
@@ -483,7 +534,7 @@ def regenerate_scene(run_directory, scene_id, backend, clock=utc_now):
             raise GenerationError(
                 f"{scene['id']} has an invalid selected artifact; run resume first."
             )
-        invalidate_selected(scene, selected, reason)
+        invalidate_selected(scene, selected, reason, manifest)
 
     validate_next_attempt_paths(run_directory, [requested])
     operation = start_operation(manifest, "regenerate", clock, scene_id=scene_id)

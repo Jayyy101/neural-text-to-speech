@@ -11,6 +11,7 @@ from .pipeline import (
     regenerate_scene,
     resume_generation,
 )
+from .postprocessing import assemble_chapter, repair_scene
 from .planning import PlanningError
 
 
@@ -61,6 +62,16 @@ def main(argv=None):
     )
     add_backend_options(regenerate)
     regenerate.add_argument("--scene-id", required=True)
+    repair = commands.add_parser(
+        "repair", help="Apply a source-bound manual pause plan to one scene."
+    )
+    repair.add_argument("run_directory", type=Path)
+    repair.add_argument("--scene-id", required=True)
+    repair.add_argument("--plan", type=Path, required=True)
+    assemble = commands.add_parser(
+        "assemble", help="Assemble selected scene artifacts into one chapter WAV."
+    )
+    assemble.add_argument("run_directory", type=Path)
     args = parser.parse_args(argv)
 
     if args.command == "plan":
@@ -74,6 +85,34 @@ def main(argv=None):
         print(f"Planned {len(manifest['scenes'])} scene(s).")
         print(f"Run directory: {run_dir}")
         print(f"Manifest: {run_dir / 'manifest.json'}")
+        return 0
+
+    if args.command in {"repair", "assemble"}:
+        try:
+            if args.command == "repair":
+                manifest = repair_scene(
+                    args.run_directory, args.scene_id, args.plan
+                )
+                repair_state = next(
+                    scene["repair"] for scene in manifest["scenes"]
+                    if scene["id"] == args.scene_id
+                )
+                print(
+                    f"Selected {repair_state['selected_repair_id']} for {args.scene_id}."
+                )
+            else:
+                manifest = assemble_chapter(args.run_directory)
+                assembly = manifest["assembly"]
+                print(
+                    f"Assembled {len(assembly['scenes'])} scene(s), "
+                    f"{assembly['audio']['frames']} frames."
+                )
+        except (GenerationError, OSError, ValueError) as error:
+            parser.error(str(error))
+        print(
+            f"Manifest: "
+            f"{Path(args.run_directory).expanduser().resolve() / 'manifest.json'}"
+        )
         return 0
 
     adapter = create_adapter(args)

@@ -220,7 +220,7 @@ class AudiobookRecoveryTests(unittest.TestCase):
         )
         backend = FakeBackend()
         migrated = resume_generation(self.run_dir, backend, clock=self.clock)
-        self.assertEqual(migrated["schema_version"], 3)
+        self.assertEqual(migrated["schema_version"], 4)
         self.assertEqual(backend.initialize_calls, 0)
         self.assertTrue(all(
             scene["generation"]["selected_attempt_id"] == "attempt_001"

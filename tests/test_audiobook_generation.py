@@ -80,7 +80,7 @@ class AudiobookGenerationTests(unittest.TestCase):
         ]
         self.assertEqual([call[1] for call in backend.calls], expected)
         self.assertTrue(all(path.is_file() for path in expected))
-        self.assertEqual(manifest["schema_version"], 3)
+        self.assertEqual(manifest["schema_version"], 4)
         self.assertEqual(manifest["status"], "generated")
         self.assertEqual(manifest["generation"]["summary"], {
             "generated_scenes": 3, "failed_scenes": 0, "total_scenes": 3,
@@ -168,8 +168,8 @@ class AudiobookGenerationTests(unittest.TestCase):
             cwd=ROOT, text=True, capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("{plan,generate,resume,regenerate}", result.stdout)
-        for command in ("repair", "assemble", "flag"):
+        self.assertIn("{plan,generate,resume,regenerate,repair,assemble}", result.stdout)
+        for command in ("flag", "review", "export"):
             self.assertNotIn(command, result.stdout)
 
 
