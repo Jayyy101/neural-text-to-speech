@@ -4,7 +4,7 @@
 
 Build a high-quality local Mandarin audiobook system for long Chinese web novels, keeping one narrator consistent across chapters. Priorities are naturalness, faithful pronunciation, controllable pacing, and reliable long-text generation. Azure `zh-CN-XiaoxiaoNeural` is the listening-quality reference, not an exact voice-reproduction target.
 
-Current development branch: **`v2-development`**. Milestone A was committed and pushed as **`e6f8197` — Complete MeloTTS baseline evaluation milestone**. Milestone B was committed and pushed as **`eddd3c0` — Complete Milestone B CosyVoice evaluation**. **Milestone C is complete and awaiting review/commit.**
+Current development branch: **`v2-development`**. Milestones A through D5 are committed and pushed. The D5 checkpoint is **`58f46f4` — Complete Milestone D5 end-to-end workflow and seeded regeneration**. Milestone D6 closes the backend with final documentation and regression verification.
 
 ## Completed milestone: A — Capture the MeloTTS baseline
 
@@ -75,8 +75,32 @@ Full findings, setup provenance limits, historical float-WAV compatibility failu
 
 Full findings, exact scene-break text, user listening judgments, production/evaluation boundaries, rejected alignment results, and future work: [COSYVOICE_MILESTONE_C.md](../evaluation/COSYVOICE_MILESTONE_C.md).
 
+## Completed milestone: D — Production Audiobook Backend
+
+- D1 validates one UTF-8 chapter, preserves an exact `source.txt`, and creates a deterministic explicit-marker scene plan with stable IDs, source spans, and hashes.
+- D2 generates and validates scene WAV attempts through one initialized CosyVoice3 adapter while recording backend, model, environment, narrator, and artifact provenance.
+- D3 adds resumable incomplete runs and targeted regeneration without overwriting prior attempts.
+- D4 integrates the validated manual pause-plan workflow and exact PCM chapter assembly. Assembly preserves natural clip silence and adds 0 ms extra silence.
+- D5 adds the end-to-end `run` command and explicit seeded regeneration. Seeded attempts record their process-wide Python, NumPy, CPU Torch, and CUDA Torch random-state policy. Duplicate seeded takes remain historical attempts and do not replace the prior selection.
+- D5 real acceptance processed a three-scene Mandarin chapter through planning, CosyVoice3 generation, targeted seeded regeneration, and assembly. Boundary diagnostics confirmed that chapter assembly was sample-exact; a brief boundary-area noise was already present in a generated scene's leading silence and was addressed through targeted regeneration.
+- Production artifact policy: listen or detect the affected scene, request one explicit seeded regeneration, validate it, then reassemble. Do not use automatic random retries.
+- A structurally valid WAV is not proof of perceptual quality. Listening remains necessary for narration artifacts, repetitions, pronunciation, pacing, and boundary perception.
+- Source snapshots, generation attempts, repairs, selections, hashes, and assembly frame offsets are preserved in the run manifest. Regeneration invalidates repairs bound to an old selection and marks completed assembly stale.
+- The supported CLI is `python -B -m src.audiobook` with `plan`, `run`, `generate`, `resume`, `regenerate`, `repair`, and `assemble`. Practical commands and the run layout are documented in the root [README](../README.md).
+- **143/143 model-free tests passed** again during the D6 closeout in the isolated WSL `tts-align` environment. CLI help was also verified without loading CosyVoice.
+
+## Production policy
+
+- CosyVoice3 is the selected Mandarin audiobook backend. The preferred short narrator reference and isolated `cosyvoice-b` environment remain unchanged.
+- Prefer continuous coherent scenes. Use standalone `***` source lines for intentional semantic scene boundaries.
+- Preserve generated natural silence and assemble with 0 ms extra inter-scene silence.
+- Use the manual +140 ms period repair only for a confirmed sparse pause issue. Automatic punctuation inference and alignment remain deferred.
+- Treat perceptual artifacts as generation issues unless sample-level evidence identifies assembly behavior. Exact PCM assembly neither introduces nor repairs samples within a selected scene.
+
 ## Next development work
 
-Build the non-GUI production audiobook runner around the validated policies: semantic chunking, deterministic scene concatenation, manifests, bounded regeneration, resume support, chapter assembly, and pronunciation/normalization controls. Validate full chapters before GUI integration. Automatic punctuation alignment is separate future research, not a prerequisite.
+Milestone D is the backend contract for the future UI/product milestone. A future interface can guide source preparation, start or resume runs, show manifest-backed progress, support listening and explicit attempt selection, author manual pause plans, and request assembly. It must preserve attempt/repair history, explicit recovery, reproducibility metadata, and collision protection.
 
-Begin by reading [AGENTS.md](../AGENTS.md), this handoff, and the Milestone C record; verify branch/worktree and available evidence. Keep the selected narrator, original corpus, and old outputs intact; record new evidence separately. Preserve the `melo` environment, baseline backend/GUI, and external CosyVoice source/model files unless later work explicitly authorizes changes. Do not commit or push without explicit instruction.
+Automatic alignment, automatic pause placement, perceptual artifact detection, random retry loops, crossfades, mastering, MP3 export, EPUB/PDF/DOCX ingestion, deployment, and cloud infrastructure remain separate future work.
+
+Begin future work by reading [AGENTS.md](../AGENTS.md), this handoff, and the root [README](../README.md); verify the branch and worktree before editing. Keep the selected narrator, original corpus, historical outputs, baseline evidence, `melo` environment, legacy GUI, and external CosyVoice source/model files intact unless a later milestone explicitly authorizes changes. Do not commit or push without explicit instruction.
