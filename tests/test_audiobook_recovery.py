@@ -15,6 +15,7 @@ from src.audiobook.pipeline import (
     generate_planned_run,
     regenerate_scene,
     resume_generation,
+    validate_seed,
 )
 
 
@@ -46,6 +47,22 @@ class FakeBackend:
             raise RuntimeError("synthetic generation failure")
         write_wav(output_path, frames=240 + len(self.calls))
         return {"cosyvoice_chunks": 1, "inference_seconds": 0.01, "rtf": 1.0}
+
+
+class SeedBackend(FakeBackend):
+    def __init__(self, duplicate=False, failing=False):
+        super().__init__()
+        self.duplicate = duplicate
+        self.failing = failing
+        self.seed_calls = []
+
+    def generate_scene(self, text, output_path, seed=None):
+        self.seed_calls.append((text, Path(output_path), seed))
+        if self.failing:
+            raise RuntimeError("seeded generation failure")
+        frames = 241 if self.duplicate else 900 + seed
+        write_wav(output_path, frames=frames)
+        return {"cosyvoice_chunks": 1}
 
 
 class AudiobookRecoveryTests(unittest.TestCase):
@@ -133,6 +150,77 @@ class AudiobookRecoveryTests(unittest.TestCase):
             "attempt_001", "attempt_002", "attempt_003",
         ])
         self.assertEqual(scene["selected_attempt_id"], "attempt_003")
+
+    def test_explicit_seed_is_forwarded_and_recorded_only_for_regeneration(self):
+        initial = self.generate()
+        self.assertTrue(all(
+            attempt["random_state"] == {
+                "policy": "cosyvoice_model_default_sequence", "seed": None,
+            }
+            for scene in initial["scenes"]
+            for attempt in scene["generation"]["attempts"]
+        ))
+        backend = SeedBackend()
+        manifest = regenerate_scene(
+            self.run_dir, "scene_0002", backend, clock=self.clock, seed=7
+        )
+        self.assertEqual(len(backend.seed_calls), 1)
+        self.assertEqual(
+            backend.seed_calls[0][0], initial["scenes"][1]["narration_text"]
+        )
+        self.assertEqual(backend.seed_calls[0][2], 7)
+        attempt = manifest["scenes"][1]["generation"]["attempts"][-1]
+        self.assertEqual(attempt["random_state"], {
+            "policy": "explicit_global_seed",
+            "seed": 7,
+            "scope": ["python", "numpy", "torch_cpu", "torch_cuda"],
+            "applied_after_model_initialization": True,
+        })
+        self.assertEqual(manifest["scenes"][0], initial["scenes"][0])
+        self.assertEqual(manifest["scenes"][2], initial["scenes"][2])
+
+    def test_repeated_seed_is_reproducible_and_duplicate_keeps_prior_selection(self):
+        self.generate()
+        first = regenerate_scene(
+            self.run_dir, "scene_0001", SeedBackend(), clock=self.clock, seed=11
+        )
+        self.assertEqual(
+            first["scenes"][0]["generation"]["selected_attempt_id"], "attempt_002"
+        )
+        second = regenerate_scene(
+            self.run_dir, "scene_0001", SeedBackend(), clock=self.clock, seed=11
+        )
+        generation = second["scenes"][0]["generation"]
+        self.assertEqual(generation["selected_attempt_id"], "attempt_002")
+        self.assertEqual(generation["attempts"][-1]["duplicate_of_attempt_id"], "attempt_002")
+        self.assertEqual(
+            generation["attempts"][-1]["wav_sha256"],
+            generation["attempts"][-2]["wav_sha256"],
+        )
+        self.assertEqual(generation["attempts"][-1]["random_state"]["seed"], 11)
+        self.assertEqual(second["generation"]["last_operation"]["status"], "duplicate")
+
+    def test_duplicate_of_original_and_seeded_failure_preserve_selection(self):
+        self.generate()
+        duplicate = regenerate_scene(
+            self.run_dir, "scene_0001", SeedBackend(duplicate=True),
+            clock=self.clock, seed=1,
+        )
+        generation = duplicate["scenes"][0]["generation"]
+        self.assertEqual(generation["selected_attempt_id"], "attempt_001")
+        self.assertEqual(generation["attempts"][-1]["duplicate_of_attempt_id"], "attempt_001")
+        failed = regenerate_scene(
+            self.run_dir, "scene_0001", SeedBackend(failing=True),
+            clock=self.clock, seed=2,
+        )
+        self.assertEqual(
+            failed["scenes"][0]["generation"]["selected_attempt_id"], "attempt_001"
+        )
+
+    def test_seed_api_rejects_bool_out_of_range_and_non_integer(self):
+        for invalid in (True, False, -1, 2**32, 1.5, "1"):
+            with self.subTest(invalid=invalid), self.assertRaises(GenerationError):
+                validate_seed(invalid)
 
     def test_failed_regeneration_preserves_previous_valid_selection_and_history(self):
         self.generate()
@@ -226,6 +314,18 @@ class AudiobookRecoveryTests(unittest.TestCase):
             scene["generation"]["selected_attempt_id"] == "attempt_001"
             for scene in migrated["scenes"]
         ))
+
+    def test_existing_attempts_without_random_state_remain_compatible(self):
+        manifest = self.generate()
+        for scene in manifest["scenes"]:
+            scene["generation"]["attempts"][0].pop("random_state")
+        (self.run_dir / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        backend = FakeBackend()
+        resumed = resume_generation(self.run_dir, backend, clock=self.clock)
+        self.assertEqual(backend.initialize_calls, 0)
+        self.assertEqual(resumed["generation"]["last_operation"]["status"], "no_work")
 
 
 if __name__ == "__main__":

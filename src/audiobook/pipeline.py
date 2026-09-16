@@ -23,10 +23,33 @@ ATTEMPT_RESULT_KEYS = (
     "cosyvoice_chunks", "inference_seconds", "rtf",
     "peak_torch_cuda_allocated_gib",
 )
+MAX_RANDOM_SEED = 2**32 - 1
 
 
 class GenerationError(ValueError):
     """Raised when persisted generation state is unsafe or inconsistent."""
+
+
+def validate_seed(seed):
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise GenerationError("Seed must be an integer from 0 through 4294967295.")
+    if seed < 0 or seed > MAX_RANDOM_SEED:
+        raise GenerationError("Seed must be an integer from 0 through 4294967295.")
+    return seed
+
+
+def random_state_metadata(seed):
+    if seed is None:
+        return {
+            "policy": "cosyvoice_model_default_sequence",
+            "seed": None,
+        }
+    return {
+        "policy": "explicit_global_seed",
+        "seed": seed,
+        "scope": ["python", "numpy", "torch_cpu", "torch_cuda"],
+        "applied_after_model_initialization": True,
+    }
 
 
 def utc_now():
@@ -331,7 +354,9 @@ def validate_next_attempt_paths(run_directory, scenes):
             )
 
 
-def run_attempt(run_directory, manifest_path, manifest, scene, backend, expected_rate, clock):
+def run_attempt(
+        run_directory, manifest_path, manifest, scene, backend, expected_rate, clock,
+        seed=None, reject_duplicate=False):
     generation = scene["generation"]
     previous_attempt_id = generation["selected_attempt_id"]
     attempt_id = next_attempt_id(scene)
@@ -341,27 +366,41 @@ def run_attempt(run_directory, manifest_path, manifest, scene, backend, expected
         "status": "running",
         "output_path": output_path.relative_to(run_directory).as_posix(),
         "started_at_utc": clock(),
+        "random_state": random_state_metadata(seed),
     }
     generation["attempts"].append(attempt)
     generation["status"] = "running"
     save_manifest(manifest_path, manifest)
     try:
         output_path.parent.mkdir(parents=True)
-        result = backend.generate_scene(scene["narration_text"], output_path)
+        if seed is None:
+            result = backend.generate_scene(scene["narration_text"], output_path)
+        else:
+            result = backend.generate_scene(
+                scene["narration_text"], output_path, seed=seed
+            )
         audio = wav_info(output_path, expected_rate)
+        wav_sha256 = file_sha256(output_path)
         attempt.update({
             "status": "generated",
             "finished_at_utc": clock(),
-            "wav_sha256": file_sha256(output_path),
+            "wav_sha256": wav_sha256,
             "audio": audio,
         })
         for key in ATTEMPT_RESULT_KEYS:
             if key in result:
                 attempt[key] = result[key]
-        generation["selected_attempt_id"] = attempt_id
-        generation["status"] = "generated"
-        selected_attempt_changed(manifest, scene, previous_attempt_id, attempt_id)
-        succeeded = True
+        previous_attempt = selected_attempt(scene)
+        if (reject_duplicate and previous_attempt is not None
+                and previous_attempt.get("wav_sha256") == wav_sha256):
+            attempt["duplicate_of_attempt_id"] = previous_attempt_id
+            generation["status"] = "generated"
+            succeeded = False
+        else:
+            generation["selected_attempt_id"] = attempt_id
+            generation["status"] = "generated"
+            selected_attempt_changed(manifest, scene, previous_attempt_id, attempt_id)
+            succeeded = True
     except Exception as error:
         attempt.update({
             "status": "failed",
@@ -511,8 +550,10 @@ def resume_generation(run_directory, backend, clock=utc_now):
     return manifest
 
 
-def regenerate_scene(run_directory, scene_id, backend, clock=utc_now):
+def regenerate_scene(run_directory, scene_id, backend, clock=utc_now, seed=None):
     """Make exactly one new attempt for one explicitly requested scene."""
+    if seed is not None:
+        validate_seed(seed)
     run_directory, manifest_path, manifest = load_generation_run(run_directory)
     requested = next(
         (scene for scene in manifest["scenes"] if scene["id"] == scene_id), None
@@ -547,10 +588,18 @@ def regenerate_scene(run_directory, scene_id, backend, clock=utc_now):
         save_manifest(manifest_path, manifest)
         return manifest
 
-    _, success = run_attempt(
-        run_directory, manifest_path, manifest, requested, backend, expected_rate, clock
+    attempt, success = run_attempt(
+        run_directory, manifest_path, manifest, requested, backend, expected_rate, clock,
+        seed=seed, reject_duplicate=seed is not None,
     )
     finish_operation(operation, 1, int(success), clock)
+    if attempt.get("duplicate_of_attempt_id") is not None:
+        operation.update({
+            "status": "duplicate",
+            "duplicate_attempt_id": attempt["id"],
+            "duplicate_of_attempt_id": attempt["duplicate_of_attempt_id"],
+            "wav_sha256": attempt["wav_sha256"],
+        })
     refresh_run_status(manifest)
     save_manifest(manifest_path, manifest)
     return manifest

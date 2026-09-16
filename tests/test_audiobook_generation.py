@@ -1,5 +1,6 @@
 """Model-free tests for Milestone D2 scene generation orchestration."""
 
+import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ import unittest
 from unittest.mock import Mock, patch
 import wave
 
+from src.audiobook.__main__ import cli_seed
 from src.audiobook.cosyvoice import CosyVoiceAdapter, PROMPT_PREFIX, wav_info
 from src.audiobook.manifest import create_planning_run
 from src.audiobook.pipeline import GenerationError, generate_planned_run
@@ -100,6 +102,9 @@ class AudiobookGenerationTests(unittest.TestCase):
             self.assertEqual(attempt["audio"]["sample_rate_hz"], 24000)
             self.assertEqual(attempt["audio"]["channels"], 1)
             self.assertEqual(len(attempt["wav_sha256"]), 64)
+            self.assertEqual(attempt["random_state"], {
+                "policy": "cosyvoice_model_default_sequence", "seed": None,
+            })
         saved = json.loads((self.run_dir / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(saved, manifest)
 
@@ -168,9 +173,32 @@ class AudiobookGenerationTests(unittest.TestCase):
             cwd=ROOT, text=True, capture_output=True,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("{plan,generate,resume,regenerate,repair,assemble}", result.stdout)
+        self.assertIn(
+            "{plan,run,generate,resume,regenerate,repair,assemble}", result.stdout
+        )
         for command in ("flag", "review", "export"):
             self.assertNotIn(command, result.stdout)
+
+    def test_seed_cli_validation_and_scope(self):
+        self.assertEqual(cli_seed("0"), 0)
+        self.assertEqual(cli_seed(str(2**32 - 1)), 2**32 - 1)
+        for invalid in ("-1", str(2**32), "1.5", "true"):
+            with self.subTest(invalid=invalid), self.assertRaises(
+                    argparse.ArgumentTypeError):
+                cli_seed(invalid)
+        regenerate_help = subprocess.run(
+            [sys.executable, "-B", "-m", "src.audiobook", "regenerate", "--help"],
+            cwd=ROOT, text=True, capture_output=True,
+        )
+        self.assertEqual(regenerate_help.returncode, 0)
+        self.assertIn("--seed", regenerate_help.stdout)
+        for command in ("generate", "resume", "run"):
+            result = subprocess.run(
+                [sys.executable, "-B", "-m", "src.audiobook", command, "--help"],
+                cwd=ROOT, text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertNotIn("--seed", result.stdout)
 
 
 class CosyVoiceAdapterTests(unittest.TestCase):
@@ -224,6 +252,34 @@ class CosyVoiceAdapterTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(result["cosyvoice_chunks"], 1)
         self.assertEqual(wav_info(self.root / "generated.wav", 24000)["frames"], 240)
+
+    def test_explicit_seed_is_applied_after_initialization_before_inference(self):
+        events = []
+        speech = Mock()
+        speech.cpu.return_value = "cpu speech"
+        model = Mock(sample_rate=24000)
+        model.inference_zero_shot.side_effect = lambda *args, **kwargs: (
+            events.append("infer") or [{"tts_speech": "chunk"}]
+        )
+        torch = Mock(__version__="test-torch")
+        torch.version.cuda = "test-cuda"
+        torch.cuda.is_available.return_value = True
+        torch.cuda.get_device_name.return_value = "test GPU"
+        torch.cuda.max_memory_allocated.return_value = 0
+        torch.cat.return_value = speech
+        torchaudio = Mock(__version__="test-audio")
+        torchaudio.save.side_effect = lambda path, *args, **kwargs: write_wav(path)
+        factory = Mock(side_effect=lambda **kwargs: events.append("initialize") or model)
+        adapter = CosyVoiceAdapter(
+            self.cosyvoice_root, self.model_dir, self.prompt_wav, self.prompt_text
+        )
+        with (
+            patch("src.audiobook.cosyvoice.load_cosyvoice_runtime", return_value=(torch, torchaudio, factory)),
+            patch("src.audiobook.cosyvoice.set_cosyvoice_random_seed", side_effect=lambda seed: events.append(("seed", seed))),
+        ):
+            adapter.initialize()
+            adapter.generate_scene("种子场景。", self.root / "seeded.wav", seed=7)
+        self.assertEqual(events, ["initialize", ("seed", 7), "infer"])
 
 
 if __name__ == "__main__":

@@ -78,6 +78,13 @@ def infer_zero_shot(model, torch, text, prompt_text, prompt_wav, stream=False):
     return torch.cat(chunks, dim=1), len(chunks)
 
 
+def set_cosyvoice_random_seed(seed):
+    """Apply CosyVoice's process-wide RNG seed after model initialization."""
+    from cosyvoice.utils.common import set_all_random_seed
+
+    set_all_random_seed(seed)
+
+
 def write_pcm16_wav(torchaudio, output_path, speech, sample_rate):
     torchaudio.save(
         str(output_path),
@@ -195,7 +202,7 @@ class CosyVoiceAdapter:
         }
         return dict(self._metadata)
 
-    def generate_scene(self, text, output_path):
+    def generate_scene(self, text, output_path, seed=None):
         if self._model is None:
             raise RuntimeError("CosyVoice adapter must be initialized before generation.")
         if not isinstance(text, str) or not text.strip():
@@ -210,6 +217,10 @@ class CosyVoiceAdapter:
             torch.cuda.reset_peak_memory_stats()
             torch.cuda.synchronize()
         started = time.perf_counter()
+        if seed is not None:
+            if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < 2**32:
+                raise ValueError("Seed must be an integer from 0 through 4294967295.")
+            set_cosyvoice_random_seed(seed)
         speech, chunk_count = infer_zero_shot(
             self._model, torch, text, self._prompt_text, self.prompt_wav,
             stream=self.settings["stream"],
