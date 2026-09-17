@@ -2,7 +2,7 @@
 
 A locally controlled neural Text-to-Speech (TTS) project. MeloTTS remains the preserved multilingual baseline and legacy GUI backend. CosyVoice3 is the selected Mandarin audiobook backend and is available through the model-free orchestration CLI in `src/audiobook`.
 
-This project started with an English VITS prototype, then expanded through XTTS and Azure Neural TTS testing. MeloTTS remains the preserved baseline and current legacy application backend. CosyVoice3 completed isolated WSL evaluation, audiobook-prosody experiments, and the production chapter backend; it is not integrated into the GUI. See [Milestone B — CosyVoice Bring-Up](evaluation/COSYVOICE_MILESTONE_B.md), [Milestone C — Audiobook Narration & Prosody Pipeline](evaluation/COSYVOICE_MILESTONE_C.md), and the [project handoff](docs/PROJECT_STATE.md).
+This project started with an English VITS prototype, then expanded through XTTS and Azure Neural TTS testing. MeloTTS remains the preserved baseline and current legacy application backend. CosyVoice3 completed isolated WSL evaluation, audiobook-prosody experiments, and the production chapter backend. Milestone E1 adds a separate read-only desktop inspector for its persisted runs; generation is not yet integrated into that interface. See [Milestone B — CosyVoice Bring-Up](evaluation/COSYVOICE_MILESTONE_B.md), [Milestone C — Audiobook Narration & Prosody Pipeline](evaluation/COSYVOICE_MILESTONE_C.md), and the [project handoff](docs/PROJECT_STATE.md).
 
 ---
 
@@ -117,7 +117,31 @@ Assembly selects a valid current repair when present and otherwise uses the sele
 - Automatic punctuation alignment, forced alignment, pause inference, perceptual artifact detection, random retry loops, mastering, MP3 export, and document ingestion remain deferred.
 - The current backend expects prepared UTF-8 chapter text with deliberate scene markers.
 
-The future UI/product milestone may present planning, progress, listening, attempt selection, repair-plan authoring, and assembly controls by calling this backend and reading its manifest. It should preserve the backend's explicit recovery and provenance rules.
+### Milestone E local interface
+
+Milestone E uses a thin local architecture: Tkinter/ttk presentation -> application/state interpretation -> the existing Milestone D backend and run artifacts. `manifest.json`, `source.txt`, scene WAVs, repairs, and final audio remain the source of truth; the interface does not maintain a second audiobook database.
+
+The implementation phases are:
+
+- **E1 — read-only existing-run inspector (complete):** open and refresh an existing run, inspect its source, generation and assembly state, scenes, attempts, seeds, errors, selected repairs, and audio metadata, then open validated selected-scene or final-chapter audio in the system player.
+- **E2 — new-run planning and generation:** future work.
+- **E3 — scene regeneration and manual repair workflow:** future work.
+- **E4 — recovery and product hardening:** future work.
+
+Launch E1 from the repository root:
+
+```powershell
+python -B -m src.audiobook_ui
+
+# Optionally open one run immediately.
+python -B -m src.audiobook_ui outputs/audiobooks/<chapter_id>/<run_id>
+```
+
+E1 is strictly read-only. It validates supported manifest schemas and artifacts through the existing backend rules, keeps generation status separate from assembly status, reports missing or invalid state without repairing it, and never silently falls back when a selected repair is invalid. Historical attempts without random-state metadata display their seed as not recorded.
+
+Manual acceptance passed against the real D5 run: loading, scene selection, selected-scene playback, final-chapter playback, refresh, and displayed persisted state were verified. The closeout model-free suite passed **154/154** tests in the isolated WSL `tts-align` environment; no model or GPU synthesis was invoked.
+
+Listening found some very short or abrupt transitions in the assembled chapter. This is consistent with the established **0 ms added inter-scene silence** policy. It is a future listening/evaluation item rather than an E1 inspector defect; E1 does not change assembly or pause behavior.
 
 ### Tests
 

@@ -97,9 +97,21 @@ Full findings, exact scene-break text, user listening judgments, production/eval
 - Use the manual +140 ms period repair only for a confirmed sparse pause issue. Automatic punctuation inference and alignment remain deferred.
 - Treat perceptual artifacts as generation issues unless sample-level evidence identifies assembly behavior. Exact PCM assembly neither introduces nor repairs samples within a selected scene.
 
+## Completed milestone: E1 — Read-only existing-run inspector
+
+- Milestone E follows a thin local architecture: Tkinter/ttk presentation -> application/state interpretation -> the existing Milestone D backend and persisted run artifacts. The run manifest and artifacts remain the source of truth; there is no independent UI database.
+- Planned phases are E1 read-only inspection, E2 new-run planning/generation, E3 scene regeneration/manual repair, and E4 recovery/product hardening. Only E1 is implemented.
+- [audiobook_application.py](../src/audiobook_application.py) interprets supported Milestone D schemas and reuses existing plan, attempt, repair, and artifact validation rules without writing run state.
+- [audiobook_ui.py](../src/audiobook_ui.py) opens or refreshes a run and presents source identity, generation and assembly status, latest operation, ordered scenes, attempts, seed provenance, errors, repairs, and audio metadata. It can open only a validated selected-scene artifact or valid current final chapter in the system player.
+- Missing historical seed metadata is reported as not recorded. A missing or invalid selected repair remains an error and never falls back silently to generated audio.
+- Launch with `python -B -m src.audiobook_ui`, optionally followed by a run directory.
+- Manual acceptance passed on the real D5 run: loading, scene selection, selected-scene playback, final-chapter playback, refresh, and displayed persisted state all matched expectations.
+- **154/154 model-free tests passed** in the isolated WSL `tts-align` environment during E1 closeout. This includes 11 focused application-layer tests and the existing audiobook regression coverage. No model or GPU synthesis was invoked.
+- Listening found some very short or abrupt scene transitions in the final chapter. This is consistent with the current 0 ms added inter-scene silence policy and is recorded for later listening/evaluation. It is not an E1 defect, and E1 does not change assembly or pause behavior.
+
 ## Next development work
 
-Milestone D is the backend contract for the future UI/product milestone. A future interface can guide source preparation, start or resume runs, show manifest-backed progress, support listening and explicit attempt selection, author manual pause plans, and request assembly. It must preserve attempt/repair history, explicit recovery, reproducibility metadata, and collision protection.
+E1 is complete and should remain a read-only inspector. The next optional phase is E2: new-run source preparation, planning, generation, progress, and basic assembly through the existing Milestone D backend. E2 is not yet implemented. Later E3 and E4 work can add explicit regeneration/manual repair and recovery/product hardening while preserving attempt and repair history, reproducibility metadata, and collision protection.
 
 Automatic alignment, automatic pause placement, perceptual artifact detection, random retry loops, crossfades, mastering, MP3 export, EPUB/PDF/DOCX ingestion, deployment, and cloud infrastructure remain separate future work.
 
