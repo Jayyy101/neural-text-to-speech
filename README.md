@@ -187,9 +187,9 @@ These files remain for reproducibility and are outside the accepted CosyVoice au
 | Files | Historical role |
 |---|---|
 | `src/generate_melo.py`, `src/gui.py` | Preserved Windows MeloTTS backend and English/Chinese Tkinter GUI. Launch the legacy GUI with `python -B src/gui.py` in its existing `melo` environment. |
-| `src/generate.py` | Earlier English VITS prototype. |
-| `src/xtts.py` | XTTS multilingual experiment. |
-| `src/generate_azure.py` | Azure Neural TTS quality benchmark; Xiaoxiao remains a listening reference. |
+| `archive/legacy_prototypes/generate.py` | Earlier English VITS prototype. |
+| `archive/legacy_prototypes/xtts.py` | XTTS multilingual experiment. |
+| `archive/legacy_prototypes/generate_azure.py` | Azure Neural TTS quality benchmark; Xiaoxiao remains a listening reference. |
 
 The root `requirements.txt` describes the historical Melo GUI, not the WSL CosyVoice production environment. It is not a validated lockfile for recreating the captured `melo` environment. The Melo baseline, including measured results and known failures, is documented in [evaluation/README.md](evaluation/README.md); its environment capture is under `evaluation/baseline/`. Generated audio and run evidence under `outputs/` are local and Git-ignored.
 
