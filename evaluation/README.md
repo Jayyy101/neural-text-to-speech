@@ -78,7 +78,7 @@ evaluation/
   inputs/
     mandarin_diagnostics.json
   run_melo_smoke.py
-tests/
+tests/evaluation/
   test_melo_baseline.py
 ```
 

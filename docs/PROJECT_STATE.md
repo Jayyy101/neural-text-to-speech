@@ -64,7 +64,7 @@ Full versions, source/checkpoint hashes, and capture limitations: [melo-environm
 - At the Melo baseline milestone, short-passage stability did not establish multi-chapter reliability; application-level chunking, stitching, and resumable jobs were still future work. The accepted CosyVoice backend now has unit planning, exact assembly, and resume. Pronunciation overrides remain future work.
 - Legacy Melo GUI threading issues and backend edge cases were outside the baseline and model bring-up milestones.
 - The runner continues after failed trials, records exact inputs/settings/timings/tracebacks, uses descriptive WAV filenames, and summarizes results. `--open-output` is optional.
-- Corpus: [mandarin_diagnostics.json](../evaluation/inputs/mandarin_diagnostics.json). Runner: [run_melo_smoke.py](../evaluation/run_melo_smoke.py). Model-free tests: [test_melo_baseline.py](../tests/test_melo_baseline.py).
+- Corpus: [mandarin_diagnostics.json](../evaluation/inputs/mandarin_diagnostics.json). Runner: [run_melo_smoke.py](../evaluation/run_melo_smoke.py). Model-free tests: [test_melo_baseline.py](../tests/evaluation/test_melo_baseline.py).
 
 ## Historical model selection decisions
 
