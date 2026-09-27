@@ -3,9 +3,11 @@
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import traceback
+import time
 import wave
 
 from .cosyvoice import file_sha256, wav_info
@@ -20,6 +22,7 @@ PLANNING_SCENE_KEYS = (
     "id", "order", "source_span", "narration_text", "text_sha256",
 )
 ATTEMPT_RESULT_KEYS = (
+    "text_preprocessing",
     "cosyvoice_chunks", "inference_seconds", "rtf",
     "peak_torch_cuda_allocated_gib",
 )
@@ -67,11 +70,26 @@ def error_record(error):
 
 
 def save_manifest(path, manifest):
-    temporary = path.with_suffix(".json.tmp")
-    temporary.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    temporary.replace(path)
+    """Atomically persist a run, tolerating a brief OneDrive destination lock."""
+    payload = json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    temporary = path.with_name(path.name + f".partial.{os.getpid()}")
+    temporary.write_text(payload, encoding="utf-8")
+    for retry in range(20):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            # A delayed success can be reported after the temporary vanishes.
+            if not temporary.exists():
+                try:
+                    if path.exists() and path.read_text(encoding="utf-8") == payload:
+                        return
+                except PermissionError:
+                    pass
+                temporary.write_text(payload, encoding="utf-8")
+            if retry == 19:
+                raise
+            time.sleep(0.5)
 
 
 def read_manifest(run_directory):
@@ -368,6 +386,11 @@ def run_attempt(
         "started_at_utc": clock(),
         "random_state": random_state_metadata(seed),
     }
+    preprocessing_provenance = getattr(backend, "preprocessing_provenance", None)
+    if callable(preprocessing_provenance):
+        attempt["text_preprocessing"] = preprocessing_provenance(
+            scene["narration_text"]
+        )
     generation["attempts"].append(attempt)
     generation["status"] = "running"
     save_manifest(manifest_path, manifest)
@@ -389,6 +412,11 @@ def run_attempt(
         })
         for key in ATTEMPT_RESULT_KEYS:
             if key in result:
+                if (key == "text_preprocessing" and key in attempt
+                        and attempt[key] != result[key]):
+                    raise ValueError(
+                        "Backend text preprocessing provenance changed during synthesis."
+                    )
                 attempt[key] = result[key]
         previous_attempt = selected_attempt(scene)
         if (reject_duplicate and previous_attempt is not None

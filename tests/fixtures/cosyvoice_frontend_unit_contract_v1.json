@@ -1,0 +1,41 @@
+{
+  "description": "Small saved observations from the pinned Mandarin frontend. Short sentences merge because the installed Chinese splitter uses soft 60/80-character grouping.",
+  "cases": [
+    {
+      "id": "crlf_and_sentence_split",
+      "source": "甲。\r\n乙。",
+      "normalized_units": ["甲。乙。"]
+    },
+    {
+      "id": "number_normalization",
+      "source": "第1章。正文。",
+      "normalized_units": ["第一章。正文。"]
+    },
+    {
+      "id": "punctuation_normalization",
+      "source": "哦?!继续！",
+      "normalized_units": ["哦?继续！"]
+    },
+    {
+      "id": "repeated_text",
+      "source": "相同。相同。",
+      "normalized_units": ["相同。相同。"]
+    },
+    {
+      "id": "historical_clean12_first_two",
+      "source": "神通者 第1章 雷火馆\r\n\r\n“喜事喜事，大喜事!“\r\n\r\n雷火馆里院，紧闭的院门哐的一声被猛然推开，一道带着欢欣雀跃的女孩声音传进院中，同时也将院中正沉浸于修炼中的少年惊醒。\r\n\r\n少年约莫十四五岁，身姿挺拔，背脊如枪般，穿着雷火馆的赤红馆服，上面绣着雷霆与火焰的图纹，他的面庞\r\n\r\n虽然还带着一些少年的稚气，但那一对眼目，却仿佛是经过雷火的淬炼，显得颇为的明亮与沉稳。\r\n\r\n",
+      "normalized_units": [
+        "神通者第一章雷火馆“喜事喜事，大喜事!“雷火馆里院，紧闭的院门哐的一声被猛然推开，一道带着欢欣雀跃的女孩声音传进院中，同时也将院中正沉浸于修炼中的少年惊醒。",
+        "少年约莫十四五岁，身姿挺拔，背脊如枪般，穿着雷火馆的赤红馆服，上面绣着雷霆与火焰的图纹，他的面庞虽然还带着一些少年的稚气，但那一对眼目，却仿佛是经过雷火的淬炼，显得颇为的明亮与沉稳。"
+      ],
+      "historical_source_text_sha256": [
+        "efae5b4107a7e95a987470328f316d6e76f58d9a43918f7631b163749d7e0d70",
+        "12bebcca4666db15606f9e80ef4035fd96ece66b094f86d3596159d74836c3bc"
+      ],
+      "historical_normalized_text_sha256": [
+        "fd314e80cfe4ff36588ad7c9e1573363a191f25e90bf3afab5ec54a1b82d3be1",
+        "e39debf6437f0e1a47e1bc17b2e582c6c943136f83d5fd089ba1786208a55b05"
+      ]
+    }
+  ]
+}

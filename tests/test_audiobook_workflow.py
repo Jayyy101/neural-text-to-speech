@@ -144,6 +144,7 @@ class AudiobookWorkflowTests(unittest.TestCase):
         with patch("src.audiobook.__main__.create_adapter", return_value=backend):
             result = main([
                 "run", str(self.source),
+                "--legacy-scenes",
                 "--chapter-id", "chapter_cli",
                 "--run-id", "run_cli",
                 "--output-root", str(self.output_root),
@@ -159,6 +160,7 @@ class AudiobookWorkflowTests(unittest.TestCase):
         with patch("src.audiobook.__main__.create_adapter", return_value=backend):
             result = main([
                 "run", str(self.source),
+                "--legacy-scenes",
                 "--chapter-id", "chapter_failed_cli",
                 "--run-id", "run_failed_cli",
                 "--output-root", str(self.output_root),

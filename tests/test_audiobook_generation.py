@@ -2,6 +2,7 @@
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -12,7 +13,13 @@ from unittest.mock import Mock, patch
 import wave
 
 from src.audiobook.__main__ import cli_seed
-from src.audiobook.cosyvoice import CosyVoiceAdapter, PROMPT_PREFIX, wav_info
+from src.audiobook.cosyvoice import (
+    CosyVoiceAdapter,
+    PROMPT_PREFIX,
+    TEXT_PREPROCESSING_POLICY,
+    preprocess_synthesis_text,
+    wav_info,
+)
 from src.audiobook.manifest import create_planning_run
 from src.audiobook.pipeline import GenerationError, generate_planned_run
 
@@ -53,6 +60,23 @@ class FakeBackend:
         else:
             write_wav(output_path)
         return {"cosyvoice_chunks": 2, "inference_seconds": 0.25, "rtf": 0.5}
+
+
+class PreprocessingBackend(FakeBackend):
+    def configuration(self):
+        return {
+            **super().configuration(),
+            "text_preprocessing": {"policy": TEXT_PREPROCESSING_POLICY},
+        }
+
+    def preprocessing_provenance(self, text):
+        return preprocess_synthesis_text(text)[1]
+
+    def generate_scene(self, text, output_path):
+        synthesis_text, provenance = preprocess_synthesis_text(text)
+        self.calls.append((synthesis_text, Path(output_path)))
+        write_wav(output_path)
+        return {"cosyvoice_chunks": 1, "text_preprocessing": provenance}
 
 
 class AudiobookGenerationTests(unittest.TestCase):
@@ -107,6 +131,42 @@ class AudiobookGenerationTests(unittest.TestCase):
             })
         saved = json.loads((self.run_dir / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(saved, manifest)
+
+    def test_preprocessing_provenance_persists_without_changing_plan_or_source(self):
+        source_bytes = "甲，乙。\r\n丙？！\r丁——尾。".encode("utf-8")
+        source = self.root / "crlf_chapter.txt"
+        source.write_bytes(source_bytes)
+        run_dir, planned = create_planning_run(
+            source, "chapter_crlf", "run_crlf", self.root / "outputs",
+            now=datetime(2026, 9, 15, tzinfo=timezone.utc),
+        )
+        planned_text = planned["scenes"][0]["narration_text"]
+        backend = PreprocessingBackend()
+        manifest = generate_planned_run(
+            run_dir, backend, clock=lambda: next(self.times)
+        )
+
+        self.assertEqual((run_dir / "source.txt").read_bytes(), source_bytes)
+        self.assertEqual(manifest["scenes"][0]["narration_text"], planned_text)
+        self.assertEqual(planned_text, "甲，乙。\r\n丙？！\r丁——尾。")
+        self.assertEqual(backend.calls[0][0], "甲，乙。\n丙？！丁——尾。")
+        provenance = manifest["scenes"][0]["generation"]["attempts"][0][
+            "text_preprocessing"
+        ]
+        expected_output = planned_text.replace("\r", "")
+        self.assertEqual(provenance, {
+            "policy": TEXT_PREPROCESSING_POLICY,
+            "input_text": planned_text,
+            "input_text_sha256": hashlib.sha256(
+                planned_text.encode("utf-8")
+            ).hexdigest(),
+            "output_text": expected_output,
+            "output_text_sha256": hashlib.sha256(
+                expected_output.encode("utf-8")
+            ).hexdigest(),
+            "removed_cr_count": 2,
+            "changed": True,
+        })
 
     def test_one_failure_is_recorded_others_continue_and_no_retry_occurs(self):
         backend = FakeBackend(failing_text="场景乙？\n")
@@ -174,7 +234,8 @@ class AudiobookGenerationTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn(
-            "{plan,run,generate,resume,regenerate,repair,assemble}", result.stdout
+            "{plan,prepare-units,run,generate,resume,regenerate,repair,assemble}",
+            result.stdout,
         )
         for command in ("flag", "review", "export"):
             self.assertNotIn(command, result.stdout)
@@ -252,6 +313,64 @@ class CosyVoiceAdapterTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(result["cosyvoice_chunks"], 1)
         self.assertEqual(wav_info(self.root / "generated.wav", 24000)["frames"], 240)
+
+    def test_adapter_removes_only_cr_and_records_exact_provenance(self):
+        speech = Mock()
+        speech.cpu.return_value = "cpu speech"
+        model = Mock(sample_rate=24000)
+        model.inference_zero_shot.return_value = [{"tts_speech": "chunk"}]
+        torch = Mock(__version__="test-torch")
+        torch.version.cuda = "test-cuda"
+        torch.cuda.is_available.return_value = True
+        torch.cuda.get_device_name.return_value = "test GPU"
+        torch.cuda.max_memory_allocated.return_value = 0
+        torch.cat.return_value = speech
+        torchaudio = Mock(__version__="test-audio")
+        torchaudio.save.side_effect = lambda path, *args, **kwargs: write_wav(path)
+        adapter = CosyVoiceAdapter(
+            self.cosyvoice_root, self.model_dir, self.prompt_wav, self.prompt_text
+        )
+        source_text = "甲，乙。\r\n丙？！\r丁——尾。"
+        expected_text = "甲，乙。\n丙？！丁——尾。"
+        with patch(
+            "src.audiobook.cosyvoice.load_cosyvoice_runtime",
+            return_value=(torch, torchaudio, Mock(return_value=model)),
+        ):
+            metadata = adapter.initialize()
+            result = adapter.generate_scene(source_text, self.root / "crlf.wav")
+
+        self.assertEqual(
+            model.inference_zero_shot.call_args.args[0], expected_text
+        )
+        self.assertEqual(
+            metadata["text_preprocessing"],
+            {"policy": TEXT_PREPROCESSING_POLICY},
+        )
+        self.assertEqual(result["text_preprocessing"], {
+            "policy": TEXT_PREPROCESSING_POLICY,
+            "input_text": source_text,
+            "input_text_sha256": hashlib.sha256(
+                source_text.encode("utf-8")
+            ).hexdigest(),
+            "output_text": expected_text,
+            "output_text_sha256": hashlib.sha256(
+                expected_text.encode("utf-8")
+            ).hexdigest(),
+            "removed_cr_count": 2,
+            "changed": True,
+        })
+
+    def test_adapter_leaves_lf_only_text_unchanged(self):
+        text = "甲，乙。\n丙？！——尾。"
+        synthesis_text, provenance = preprocess_synthesis_text(text)
+        self.assertEqual(synthesis_text, text)
+        self.assertEqual(provenance["input_text"], text)
+        self.assertEqual(provenance["output_text"], text)
+        self.assertEqual(
+            provenance["input_text_sha256"], provenance["output_text_sha256"]
+        )
+        self.assertEqual(provenance["removed_cr_count"], 0)
+        self.assertFalse(provenance["changed"])
 
     def test_explicit_seed_is_applied_after_initialization_before_inference(self):
         events = []

@@ -6,6 +6,14 @@ Build a high-quality local Mandarin audiobook system for long Chinese web novels
 
 Current development branch: **`v2-development`**. Milestones A through D5 are committed and pushed. The D5 checkpoint is **`58f46f4` — Complete Milestone D5 end-to-end workflow and seeded regeneration**. Milestone D6 closes the backend with final documentation and regression verification.
 
+## Current validated audiobook backend
+
+- **CosyVoice3 RL (`llm.rl.pt`) is the validated production generator.** The normal `run` CLI uses the pinned local RL checkpoint through a verified model view and the unchanged short Xiaoxiao zero-shot reference. The older scene workflow remains available for historical runs and through `run --legacy-scenes`.
+- New runs freeze native frontend units, certify ordered source spans under versioned mapping policy, add explicit terminal punctuation to a detected unpunctuated chapter heading, and pass frozen text to CosyVoice with frontend bypass. The only extra source-certification equivalence is the verified native terminal `、` to `。` case; it is recorded per affected unit. Production does not insert generic silence, waveform repairs, donor breaths, or automatic `[breath]` tokens. Explicit official control tokens remain pass-through capable.
+- Deterministic per-unit seeds, the validated contiguous Han deletion QC, at most three physical attempts after valid rejection, same-WAV infrastructure recovery, atomic manifest persistence with bounded OneDrive lock retries, and exact PCM assembly are the production path. Historical accepted runs retain their recorded policies and model configuration.
+- **Sustained listening acceptance is complete:** the full Chapter 2 RL run improved known flow and content problems; unseen full Chapter 3 was followed naturally during casual listening, with only minor pause wishes and no recurring serious issue. Chapter 3 produced 63/63 selected units, no QC retries, and a verified sample-exact 16:29.52 chapter WAV. Generator research is closed; pause or breath refinement is optional polish.
+- The next product milestone is a simple **paste chapter → Generate → finished audiobook** UI over this backend, with visible progress, resume, and access to the validated final WAV. The existing E1 inspector is read-only and does not yet provide this workflow.
+
 ## Completed milestone: A — Capture the MeloTTS baseline
 
 - **Complete:** environment/hardware capture, seven diagnostic inputs, evaluation runner, GPU baseline, and manual listening review.
@@ -109,9 +117,15 @@ Full findings, exact scene-break text, user listening judgments, production/eval
 - **154/154 model-free tests passed** in the isolated WSL `tts-align` environment during E1 closeout. This includes 11 focused application-layer tests and the existing audiobook regression coverage. No model or GPU synthesis was invoked.
 - Listening found some very short or abrupt scene transitions in the final chapter. This is consistent with the current 0 ms added inter-scene silence policy and is recorded for later listening/evaluation. It is not an E1 defect, and E1 does not change assembly or pause behavior.
 
-## Next development work
+## Historical unit-path development notes
 
-E1 is complete and should remain a read-only inspector. The next optional phase is E2: new-run source preparation, planning, generation, progress, and basic assembly through the existing Milestone D backend. E2 is not yet implemented. Later E3 and E4 work can add explicit regeneration/manual repair and recovery/product hardening while preserving attempt and repair history, reproducibility metadata, and collision protection.
+The schema-5 unit path freezes and certifies frontend units, generates each frozen unit with a deterministic seed, and assembles selected unit PCM exactly. Step 2 real acceptance passed on the saved two-unit fixture: one warm CosyVoice3 model, two independent attempts, exact PCM assembly with zero injected silence, and unchanged selections/seeds/hashes after resume. Chapter-title punctuation was subsequently promoted as a recorded first-unit synthesis override.
+
+Step 3 adds a required content-QC gate for **new** schema-5 runs: a persistent audio-only ASR worker in `tts-align`, deterministic Han comparison, and the fixed contiguous expected deletion threshold of four. Atomic per-attempt sidecars bind the evidence; assembly requires passed evidence. Real acceptance passed on the two-unit fixture: both units passed, one worker served both, exact PCM assembly was preserved, and resume made no new TTS or ASR requests. CosyVoice and ASR CUDA execution completed without failure.
+
+Step 4 adds a persisted `bounded_content_qc_retries_v1` policy to new QC-enabled runs: at most three physical synthesis attempts per unit. Only a validated content rejection advances the logical take and its deterministic seed. An interrupted synthesis attempt reuses its logical take seed within the physical-attempt budget. QC infrastructure errors retry recognition on the same WAV; three valid rejections persist exhaustion, leave the unit unresolved, and block assembly. Rejected WAVs and sidecars remain append-only evidence. Existing Step 3 QC runs without the retry policy and Step 2 schema-5 runs without QC retain their recorded behavior; historical schemas 2–4 remain unchanged. Model-free tests cover these paths; the Chapter 1 full-chapter acceptance run recorded a confirmed omission in unit 66 and a successful second deterministic attempt.
+
+E1 remains a read-only inspector. The next active phase is a simple paste → Generate → finished audiobook UI over the validated schema-5 RL backend, with progress and recovery visible to the user. Scene repair and more elaborate controls remain later, optional work.
 
 Automatic alignment, automatic pause placement, perceptual artifact detection, random retry loops, crossfades, mastering, MP3 export, EPUB/PDF/DOCX ingestion, deployment, and cloud infrastructure remain separate future work.
 

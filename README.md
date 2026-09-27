@@ -1,6 +1,6 @@
 # Neural Multilingual Text-to-Speech System
 
-A locally controlled neural Text-to-Speech (TTS) project. MeloTTS remains the preserved multilingual baseline and legacy GUI backend. CosyVoice3 is the selected Mandarin audiobook backend and is available through the model-free orchestration CLI in `src/audiobook`.
+A locally controlled neural Text-to-Speech (TTS) project. MeloTTS remains the preserved multilingual baseline and legacy GUI backend. CosyVoice3 RL is the validated Mandarin audiobook generator through the orchestration CLI in `src/audiobook`.
 
 This project started with an English VITS prototype, then expanded through XTTS and Azure Neural TTS testing. MeloTTS remains the preserved baseline and current legacy application backend. CosyVoice3 completed isolated WSL evaluation, audiobook-prosody experiments, and the production chapter backend. Milestone E1 adds a separate read-only desktop inspector for its persisted runs; generation is not yet integrated into that interface. See [Milestone B — CosyVoice Bring-Up](evaluation/COSYVOICE_MILESTONE_B.md), [Milestone C — Audiobook Narration & Prosody Pipeline](evaluation/COSYVOICE_MILESTONE_C.md), and the [project handoff](docs/PROJECT_STATE.md).
 
@@ -8,17 +8,16 @@ This project started with an English VITS prototype, then expanded through XTTS 
 
 ## Mandarin Audiobook Backend
 
-Milestone D provides a manifest-driven chapter workflow:
+The default `run` command provides a manifest-driven chapter workflow:
 
 ```text
 UTF-8 chapter text
-  -> deterministic scene plan
-  -> CosyVoice3 scene attempts
-  -> optional targeted regeneration or manual pause repair
+  -> deterministic scene and certified unit plan
+  -> CosyVoice3 RL unit attempts with bounded content-QC retries
   -> exact PCM chapter assembly
 ```
 
-Scene boundaries are explicit standalone `***` lines. Text without markers is one continuous scene; the planner does not automatically segment or pack paragraphs. Continuous scene generation is preferred because sentence-by-sentence synthesis can reset narration prosody.
+Scene boundaries are explicit standalone `***` lines. Text without markers is one scene; the pinned native CosyVoice frontend then freezes its synthesis units. The historical scene path remains available through `run --legacy-scenes` and existing run manifests.
 
 ### Milestone responsibilities
 
@@ -35,7 +34,7 @@ Scene boundaries are explicit standalone `***` lines. Text without markers is on
 Planning, manifest inspection, repair, assembly, CLI help, and tests do not load CosyVoice. Real generation uses the isolated WSL2 `cosyvoice-b` environment described in [Milestone B](evaluation/COSYVOICE_MILESTONE_B.md):
 
 - CosyVoice checkout: `~/CosyVoice`
-- model: `~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B`
+- model: local `~/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B/llm.rl.pt`, exposed through a verified view under `outputs/model_views/`
 - preferred prompt WAV and transcript: `~/CosyVoice/reference_audio/xiaoxiao_narrator_short.{wav,txt}`
 - CUDA-capable PyTorch in the `cosyvoice-b` environment
 
@@ -50,19 +49,19 @@ Run commands from the repository root. The default output root is `outputs/audio
 python -B -m src.audiobook plan chapter.txt \
   --chapter-id chapter_0001 --run-id run_001
 
-# Generate all scenes in an existing planned run.
+# Historical scene workflow for an existing D1 plan.
 python -B -m src.audiobook generate \
   outputs/audiobooks/chapter_0001/run_001
 
-# Plan, generate all scenes with one model initialization, and assemble.
+# Default: plan, certify units, generate with RL and bounded QC, and assemble.
 python -B -m src.audiobook run chapter.txt \
   --chapter-id chapter_0001 --run-id run_002
 
-# Generate one new attempt for every scene without a valid selection.
+# Resume any incomplete run under its recorded policy.
 python -B -m src.audiobook resume \
   outputs/audiobooks/chapter_0001/run_001
 
-# Generate one new attempt for one scene.
+# Historical scene-only targeted regeneration.
 python -B -m src.audiobook regenerate \
   outputs/audiobooks/chapter_0001/run_001 --scene-id scene_0002
 
@@ -81,7 +80,32 @@ python -B -m src.audiobook assemble \
   outputs/audiobooks/chapter_0001/run_001
 ```
 
-`run` does not retry, regenerate, or repair automatically. If a required scene fails, it records the failure and stops before assembly. The independent `resume`, `regenerate`, `repair`, and `assemble` commands provide explicit recovery.
+Default `run` retries only validated contiguous Han omissions within the recorded three-attempt cap. If a unit remains unresolved, the run stays resumable and assembly is blocked. Historical scene generation is available with `run --legacy-scenes`; `regenerate` and `repair` remain scene-only operations.
+
+### Unit-planned chapter path (schema 5)
+
+This is the default `run` workflow and is also available as separate commands. It freezes native normalized text, certifies exact source spans, and records explicit punctuation after a detected unpunctuated chapter heading. The narrow native terminal `、` to `。` mapping equivalence is versioned and auditable; it never rewrites the frozen synthesis unit. No breath, silence, trimming, fade, or crossfade is inserted automatically. Explicit native control tokens such as `[breath]` pass through the unit synthesis adapter when supplied in authorized synthesis text.
+
+```bash
+python -B -m src.audiobook plan chapter.txt \
+  --chapter-id chapter_units --run-id run_001
+python -B -m src.audiobook prepare-units \
+  outputs/audiobooks/chapter_units/run_001
+python -B -m src.audiobook generate \
+  outputs/audiobooks/chapter_units/run_001 --root-seed 12345
+python -B -m src.audiobook resume \
+  outputs/audiobooks/chapter_units/run_001
+python -B -m src.audiobook assemble \
+  outputs/audiobooks/chapter_units/run_001
+```
+
+`--root-seed` is optional on first `generate`; an omitted value is generated and persisted before synthesis. Schema 5 derives an explicit 32-bit seed from the root seed, immutable unit-plan hash, unit ID, take index, and versioned `sha256_root_plan_unit_take_v1` policy. Interrupted physical attempts of the same logical take reuse that seed, and skipping selected units cannot shift later seeds. This changes RNG semantics from historical scene generation and clean12's advancing global random stream.
+
+One warm model synthesizes each frozen normalized unit with `text_frontend=False`. Each attempt has its own WAV, seed, hash, metadata, timing, and append-only history; scenes report aggregate completion. Resume validates and skips selected units, recovers valid unpublished WAVs, and preserves interrupted artifacts. Missing or corrupt selected WAVs stop recovery. Assembly concatenates selected unit PCM in scene and unit order with 0 ms injected silence, records frame offsets and output hash, and becomes stale after a selection change. Manual scene pause repairs and scene regeneration are unsupported for schema 5. Schemas 2–4 retain their historical scene behavior without migration.
+
+New schema-5 runs require the fixed Mandarin content gate before a generated attempt can be selected. A persistent audio-only ASR worker runs in the isolated `tts-align` interpreter while CosyVoice stays in `cosyvoice-b`. The worker receives only the WAV path/hash and returns independent greedy CTC recognition; the parent then compares frozen intended Han text with the recognized sequence. A contiguous expected Han deletion of **4 or more** rejects the attempt. Atomic `content_qc.json` sidecars bind passed/rejected evidence to each attempt. Step 3 real acceptance passed on the two-unit fixture: both units passed, one worker served both, exact PCM assembly was preserved, and resume made no new TTS or ASR requests.
+
+For **new** QC-enabled runs, the persisted `bounded_content_qc_retries_v1` policy permits at most three total physical synthesis attempts per unit. A validated content rejection advances the logical take index and derives a new seed from the existing root/plan/unit/take policy; synthesis interruption can create another physical attempt with the same logical take and seed while the physical-attempt budget remains. Passed QC selects and stops. QC infrastructure errors, pending/running QC, and interrupted QC retry recognition on the existing WAV; a corrupt artifact or evidence fails closed. Three valid content rejections persist an exhausted state, leave the unit unresolved, and block assembly. Substitutions, insertions, CER, and deletions of 1–3 expected Han characters do not trigger synthesis retries. Earlier QC-enabled Step 3 runs without a retry-policy record retain their recorded no-retry behavior. Existing Step 2 schema-5 runs without QC retain their historical selection behavior. The validated whole-WAV ASR path remains limited to 30 seconds per unit. The Chapter 1 full-chapter acceptance run recorded a confirmed omission in unit 66 and a successful second deterministic attempt.
 
 ### Run artifacts and state
 

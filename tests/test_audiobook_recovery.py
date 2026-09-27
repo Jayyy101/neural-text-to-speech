@@ -10,6 +10,7 @@ from unittest.mock import Mock
 import wave
 
 from src.audiobook.manifest import create_planning_run
+from src.audiobook.cosyvoice import TEXT_PREPROCESSING_POLICY
 from src.audiobook.pipeline import (
     GenerationError,
     generate_planned_run,
@@ -102,6 +103,38 @@ class AudiobookRecoveryTests(unittest.TestCase):
         self.assertEqual([a["status"] for a in scene["attempts"]], ["failed", "generated"])
         self.assertEqual(scene["selected_attempt_id"], "attempt_002")
         self.assertEqual(manifest["generation"]["last_operation"]["attempted_scenes"], 1)
+
+    def test_resume_rejects_incompatible_text_preprocessing_policy(self):
+        self.generate(FakeBackend(failing_text="场景乙？\n"))
+        manifest_path = self.run_dir / "manifest.json"
+        manifest = self.read_manifest()
+        manifest["generation"]["backend"]["text_preprocessing"] = {
+            "policy": "legacy_identity_v0"
+        }
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        backend = FakeBackend()
+        original_configuration = backend.configuration
+        backend.configuration = lambda: {
+            **original_configuration(),
+            "text_preprocessing": {"policy": TEXT_PREPROCESSING_POLICY},
+        }
+
+        resumed = resume_generation(self.run_dir, backend, clock=self.clock)
+
+        operation = resumed["generation"]["last_operation"]
+        self.assertEqual(operation["status"], "failed")
+        self.assertIn(
+            "configuration differs", operation["error"]["message"]
+        )
+        self.assertEqual(operation["attempted_scenes"], 0)
+        self.assertEqual(backend.initialize_calls, 0)
+        self.assertEqual(backend.calls, [])
+        self.assertEqual(
+            len(resumed["scenes"][1]["generation"]["attempts"]), 1
+        )
 
     def test_resume_after_initialization_failure_generates_never_attempted_scenes(self):
         backend = FakeBackend()
