@@ -1,12 +1,26 @@
 # Neural Multilingual Text-to-Speech System
 
-A locally controlled neural Text-to-Speech (TTS) project. MeloTTS remains the preserved multilingual baseline and legacy GUI backend. CosyVoice3 RL is the validated Mandarin audiobook generator through the orchestration CLI in `src/audiobook`.
+A local Mandarin audiobook app. CosyVoice3 RL is the validated production generator; MeloTTS remains a preserved historical baseline.
 
-This project started with an English VITS prototype, then expanded through XTTS and Azure Neural TTS testing. MeloTTS remains the preserved baseline and current legacy application backend. CosyVoice3 completed isolated WSL evaluation, audiobook-prosody experiments, and the production chapter backend. Milestone E1 adds a separate read-only desktop inspector for its persisted runs; generation is not yet integrated into that interface. See [Milestone B — CosyVoice Bring-Up](evaluation/COSYVOICE_MILESTONE_B.md), [Milestone C — Audiobook Narration & Prosody Pipeline](evaluation/COSYVOICE_MILESTONE_C.md), and the [project handoff](docs/PROJECT_STATE.md).
+## Windows audiobook app
+
+From PowerShell in the repository root, launch the native Windows Tkinter UI:
+
+```powershell
+python -B -m src.audiobook_ui
+```
+
+Enter a WAV filename (Unicode names such as `神通者04.wav` are supported), paste one chapter, and click **Generate Audiobook**. The UI shows unit progress and elapsed time, then displays the validated finished WAV path. **Open Folder** opens the final output directory in Windows Explorer. An omitted `.wav` extension is added automatically; an existing exported filename is never silently overwritten.
+
+Generation runs through `wsl.exe` in the isolated WSL `cosyvoice-b` environment, using the frozen `python -B -m src.audiobook run` production CLI. The source, manifest, and audio remain on the Windows filesystem. Each UI request has a UTF-8 source snapshot and worker log under `outputs/ui_requests/<job-id>/`. The canonical resumable output is `outputs/audiobooks/<chapter-id>/<run-id>/final/chapter.wav`; after validation, the requested filename is exported as a separate copy in that same `final` folder. The UI does not edit the chapter text or implement resume, cancellation, or manual repair controls.
+
+The read-only existing-run inspector is retained for maintenance: pass a run directory to `python -B -m src.audiobook_ui <run-directory>`. It is not part of the normal generation screen.
+
+For project status and acceptance evidence, see [the project handoff](docs/PROJECT_STATE.md). Historical model evaluations are in [Milestone B](evaluation/COSYVOICE_MILESTONE_B.md) and [Milestone C](evaluation/COSYVOICE_MILESTONE_C.md).
 
 ---
 
-## Mandarin Audiobook Backend
+## Production backend (developer reference)
 
 The default `run` command provides a manifest-driven chapter workflow:
 
@@ -141,31 +155,9 @@ Assembly selects a valid current repair when present and otherwise uses the sele
 - Automatic punctuation alignment, forced alignment, pause inference, perceptual artifact detection, random retry loops, mastering, MP3 export, and document ingestion remain deferred.
 - The current backend expects prepared UTF-8 chapter text with deliberate scene markers.
 
-### Milestone E local interface
+### Local interface boundary
 
-Milestone E uses a thin local architecture: Tkinter/ttk presentation -> application/state interpretation -> the existing Milestone D backend and run artifacts. `manifest.json`, `source.txt`, scene WAVs, repairs, and final audio remain the source of truth; the interface does not maintain a second audiobook database.
-
-The implementation phases are:
-
-- **E1 — read-only existing-run inspector (complete):** open and refresh an existing run, inspect its source, generation and assembly state, scenes, attempts, seeds, errors, selected repairs, and audio metadata, then open validated selected-scene or final-chapter audio in the system player.
-- **E2 — new-run planning and generation:** future work.
-- **E3 — scene regeneration and manual repair workflow:** future work.
-- **E4 — recovery and product hardening:** future work.
-
-Launch E1 from the repository root:
-
-```powershell
-python -B -m src.audiobook_ui
-
-# Optionally open one run immediately.
-python -B -m src.audiobook_ui outputs/audiobooks/<chapter_id>/<run_id>
-```
-
-E1 is strictly read-only. It validates supported manifest schemas and artifacts through the existing backend rules, keeps generation status separate from assembly status, reports missing or invalid state without repairing it, and never silently falls back when a selected repair is invalid. Historical attempts without random-state metadata display their seed as not recorded.
-
-Manual acceptance passed against the real D5 run: loading, scene selection, selected-scene playback, final-chapter playback, refresh, and displayed persisted state were verified. The closeout model-free suite passed **154/154** tests in the isolated WSL `tts-align` environment; no model or GPU synthesis was invoked.
-
-Listening found some very short or abrupt transitions in the assembled chapter. This is consistent with the established **0 ms added inter-scene silence** policy. It is a future listening/evaluation item rather than an E1 inspector defect; E1 does not change assembly or pause behavior.
+The native Windows Tkinter UI reads persisted run manifests through `src/audiobook_application.py` and starts the existing CLI through `src/audiobook_launcher.py`. The CLI retains all planning, synthesis, QC/retry, resume state, and assembly decisions. The UI validates the canonical final WAV before copying it to the user-facing filename. The historical E1 inspector remains available only when a run directory is explicitly supplied.
 
 ### Tests
 
@@ -198,7 +190,7 @@ Azure Neural TTS was used only as a quality benchmark. XTTS was tested as a mult
 
 ---
 
-## Current Legacy Application
+## Historical MeloTTS application
 
 The existing application uses:
 
@@ -292,7 +284,7 @@ cd neural-text-to-speech
 
 ---
 
-## Run the GUI
+## Run the historical MeloTTS GUI
 
 From the main project folder, run:
 

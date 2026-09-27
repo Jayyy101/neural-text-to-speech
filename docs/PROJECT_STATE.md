@@ -4,15 +4,26 @@
 
 Build a high-quality local Mandarin audiobook system for long Chinese web novels, keeping one narrator consistent across chapters. Priorities are naturalness, faithful pronunciation, controllable pacing, and reliable long-text generation. Azure `zh-CN-XiaoxiaoNeural` is the listening-quality reference, not an exact voice-reproduction target.
 
-Current development branch: **`v2-development`**. Milestones A through D5 are committed and pushed. The D5 checkpoint is **`58f46f4` — Complete Milestone D5 end-to-end workflow and seeded regeneration**. Milestone D6 closes the backend with final documentation and regression verification.
+Current development branch: **`v2-development`**. The validated CosyVoice3 RL production backend and the native Windows user-facing audiobook UI milestone are accepted. The production-backend checkpoint is **`93d4515` — Promote validated CosyVoice3 RL audiobook backend**. The next separate milestone is repository cleanup, not generator or UI redesign.
 
 ## Current validated audiobook backend
 
 - **CosyVoice3 RL (`llm.rl.pt`) is the validated production generator.** The normal `run` CLI uses the pinned local RL checkpoint through a verified model view and the unchanged short Xiaoxiao zero-shot reference. The older scene workflow remains available for historical runs and through `run --legacy-scenes`.
 - New runs freeze native frontend units, certify ordered source spans under versioned mapping policy, add explicit terminal punctuation to a detected unpunctuated chapter heading, and pass frozen text to CosyVoice with frontend bypass. The only extra source-certification equivalence is the verified native terminal `、` to `。` case; it is recorded per affected unit. Production does not insert generic silence, waveform repairs, donor breaths, or automatic `[breath]` tokens. Explicit official control tokens remain pass-through capable.
 - Deterministic per-unit seeds, the validated contiguous Han deletion QC, at most three physical attempts after valid rejection, same-WAV infrastructure recovery, atomic manifest persistence with bounded OneDrive lock retries, and exact PCM assembly are the production path. Historical accepted runs retain their recorded policies and model configuration.
-- **Sustained listening acceptance is complete:** the full Chapter 2 RL run improved known flow and content problems; unseen full Chapter 3 was followed naturally during casual listening, with only minor pause wishes and no recurring serious issue. Chapter 3 produced 63/63 selected units, no QC retries, and a verified sample-exact 16:29.52 chapter WAV. Generator research is closed; pause or breath refinement is optional polish.
-- The next product milestone is a simple **paste chapter → Generate → finished audiobook** UI over this backend, with visible progress, resume, and access to the validated final WAV. The existing E1 inspector is read-only and does not yet provide this workflow.
+- **Sustained listening acceptance is complete:** the full Chapter 2 RL run improved known flow and content problems; unseen full Chapter 3 was followed naturally during casual listening, with only minor pause wishes and no recurring serious issue. Chapter 3 produced 63/63 selected units, no QC retries, and a verified sample-exact 16:29.52 chapter WAV. The production generator is now frozen. Do not reopen generator research unless future real usage reveals a serious recurring problem.
+- The native Windows UI now provides **filename → paste chapter → Generate → progress and elapsed time → validated finished WAV → Open Folder**. It starts the frozen production CLI through `wsl.exe`; manifests and WAVs remain on the Windows filesystem. No automatic resume/recovery controls are exposed.
+
+## Accepted milestone: Windows user-facing audiobook UI
+
+- Architecture: **native Windows Tkinter UI → `wsl.exe` → frozen production `python -B -m src.audiobook run` CLI** in WSL `cosyvoice-b`. The launcher translates Windows paths, starts one job at a time, and logs worker output. The application layer interprets schema-5 progress and validates final assembly without changing production workflow behavior.
+- The normal screen accepts the desired Unicode WAV filename and exact pasted chapter text, then shows generation status, unit progress, and elapsed time. After validating canonical `final/chapter.wav`, it makes a non-overwriting copy with the requested name in the same final folder and enables **Open Folder**. The E1 inspector remains available via an explicit run-directory argument, but is hidden from the normal screen.
+- **User-reported manual acceptance:** the native UI launched the frozen WSL backend; a short smoke run and a full Chapter 4 run completed. The full Chapter 4 was comfortable to listen to throughout. A one-off extra-speech artifact in the short smoke run did not recur in that full Chapter 4 run; this does not establish that it can never recur. Chapter 1, the previous known-good quality reference, was regenerated through the current production pipeline and accepted again. Unicode filename export, progress, elapsed time, final WAV validation, and Open Folder were also confirmed.
+- This acceptance is manual end-to-end and listening evidence, separate from model-free tests. Neither the UI nor this milestone modifies the frozen backend. Next work: repository cleanup as its own milestone; retain unrelated evaluation artifacts and baseline evidence until separately reviewed.
+
+### Future user-facing audio format
+
+Keep WAV/PCM inside the validated backend for synthesis, exact assembly, validation, and resumability. A future product output should support desirably named `.mp3` audiobook files, consistent with the prior Luvvoice workflow: **validated final WAV → encode/export MP3 → expose MP3 as the normal user-facing audiobook file**. MP3 conversion is not implemented in this milestone; the canonical backend WAV remains unchanged.
 
 ## Completed milestone: A — Capture the MeloTTS baseline
 
@@ -54,7 +65,7 @@ Full versions, source/checkpoint hashes, and capture limitations: [melo-environm
 ## Decisions and model strategy
 
 - Keep the original MeloTTS implementation, environment, and benchmark evidence for reproducible comparisons.
-- **CosyVoice3 (`Fun-CosyVoice3-0.5B-2512`) is the selected foundation** for continued production-pipeline development. Melo remains the historical baseline and current legacy application backend; CosyVoice is not integrated into the GUI.
+- **CosyVoice3 (`Fun-CosyVoice3-0.5B-2512`) is the selected production foundation.** Melo remains the historical baseline and legacy GUI backend. The separate native Windows audiobook UI invokes CosyVoice through WSL.
 - Narrator identity is satisfactory with the preferred approximately 9.8-second Xiaoxiao-style reference. Milestone B model/voice searching is closed.
 - Use the same diagnostic source text across models and record model-specific settings. Keep Azure Xiaoxiao as the quality reference for naturalness, pacing, pronunciation, and audiobook suitability.
 - Choose the final backend through evidence, including narrator consistency and sustained listening, rather than GUI integration or short demos alone.
@@ -108,11 +119,11 @@ Full findings, exact scene-break text, user listening judgments, production/eval
 ## Completed milestone: E1 — Read-only existing-run inspector
 
 - Milestone E follows a thin local architecture: Tkinter/ttk presentation -> application/state interpretation -> the existing Milestone D backend and persisted run artifacts. The run manifest and artifacts remain the source of truth; there is no independent UI database.
-- Planned phases are E1 read-only inspection, E2 new-run planning/generation, E3 scene regeneration/manual repair, and E4 recovery/product hardening. Only E1 is implemented.
+- E1 was the read-only inspector. The subsequently accepted user-facing UI adds new-run generation; scene regeneration/manual repair and recovery/product hardening remain outside its visible workflow.
 - [audiobook_application.py](../src/audiobook_application.py) interprets supported Milestone D schemas and reuses existing plan, attempt, repair, and artifact validation rules without writing run state.
 - [audiobook_ui.py](../src/audiobook_ui.py) opens or refreshes a run and presents source identity, generation and assembly status, latest operation, ordered scenes, attempts, seed provenance, errors, repairs, and audio metadata. It can open only a validated selected-scene artifact or valid current final chapter in the system player.
 - Missing historical seed metadata is reported as not recorded. A missing or invalid selected repair remains an error and never falls back silently to generated audio.
-- Launch with `python -B -m src.audiobook_ui`, optionally followed by a run directory.
+- Launch the normal generation UI with `python -B -m src.audiobook_ui`. Supplying a run directory additionally opens the historical inspector for maintenance.
 - Manual acceptance passed on the real D5 run: loading, scene selection, selected-scene playback, final-chapter playback, refresh, and displayed persisted state all matched expectations.
 - **154/154 model-free tests passed** in the isolated WSL `tts-align` environment during E1 closeout. This includes 11 focused application-layer tests and the existing audiobook regression coverage. No model or GPU synthesis was invoked.
 - Listening found some very short or abrupt scene transitions in the final chapter. This is consistent with the current 0 ms added inter-scene silence policy and is recorded for later listening/evaluation. It is not an E1 defect, and E1 does not change assembly or pause behavior.
@@ -125,7 +136,7 @@ Step 3 adds a required content-QC gate for **new** schema-5 runs: a persistent a
 
 Step 4 adds a persisted `bounded_content_qc_retries_v1` policy to new QC-enabled runs: at most three physical synthesis attempts per unit. Only a validated content rejection advances the logical take and its deterministic seed. An interrupted synthesis attempt reuses its logical take seed within the physical-attempt budget. QC infrastructure errors retry recognition on the same WAV; three valid rejections persist exhaustion, leave the unit unresolved, and block assembly. Rejected WAVs and sidecars remain append-only evidence. Existing Step 3 QC runs without the retry policy and Step 2 schema-5 runs without QC retain their recorded behavior; historical schemas 2–4 remain unchanged. Model-free tests cover these paths; the Chapter 1 full-chapter acceptance run recorded a confirmed omission in unit 66 and a successful second deterministic attempt.
 
-E1 remains a read-only inspector. The next active phase is a simple paste → Generate → finished audiobook UI over the validated schema-5 RL backend, with progress and recovery visible to the user. Scene repair and more elaborate controls remain later, optional work.
+The accepted Windows UI now provides the simple paste → Generate → finished audiobook path over the validated schema-5 RL backend. The historical E1 inspector remains available for maintenance. Recovery controls, scene repair, and more elaborate controls are not part of the accepted main workflow; repository cleanup is the next separate milestone.
 
 Automatic alignment, automatic pause placement, perceptual artifact detection, random retry loops, crossfades, mastering, MP3 export, EPUB/PDF/DOCX ingestion, deployment, and cloud infrastructure remain separate future work.
 
