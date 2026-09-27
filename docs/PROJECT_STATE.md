@@ -4,7 +4,7 @@
 
 Build a high-quality local Mandarin audiobook system for long Chinese web novels, keeping one narrator consistent across chapters. Priorities are naturalness, faithful pronunciation, controllable pacing, and reliable long-text generation. Azure `zh-CN-XiaoxiaoNeural` is the listening-quality reference, not an exact voice-reproduction target.
 
-Current development branch: **`v2-development`**. The validated CosyVoice3 RL production backend and the native Windows user-facing audiobook UI milestone are accepted. The production-backend checkpoint is **`93d4515` — Promote validated CosyVoice3 RL audiobook backend**. The next separate milestone is repository cleanup, not generator or UI redesign.
+Current development branch: **`v2-development`**. The validated CosyVoice3 RL production backend and the native Windows user-facing audiobook UI milestone are accepted. The production-backend checkpoint is **`93d4515` — Promote validated CosyVoice3 RL audiobook backend**. Repository cleanup is the current separate milestone; the accepted generator and UI remain frozen.
 
 ## Current validated audiobook backend
 
@@ -19,13 +19,17 @@ Current development branch: **`v2-development`**. The validated CosyVoice3 RL pr
 - Architecture: **native Windows Tkinter UI → `wsl.exe` → frozen production `python -B -m src.audiobook run` CLI** in WSL `cosyvoice-b`. The launcher translates Windows paths, starts one job at a time, and logs worker output. The application layer interprets schema-5 progress and validates final assembly without changing production workflow behavior.
 - The normal screen accepts the desired Unicode WAV filename and exact pasted chapter text, then shows generation status, unit progress, and elapsed time. After validating canonical `final/chapter.wav`, it makes a non-overwriting copy with the requested name in the same final folder and enables **Open Folder**. The E1 inspector remains available via an explicit run-directory argument, but is hidden from the normal screen.
 - **User-reported manual acceptance:** the native UI launched the frozen WSL backend; a short smoke run and a full Chapter 4 run completed. The full Chapter 4 was comfortable to listen to throughout. A one-off extra-speech artifact in the short smoke run did not recur in that full Chapter 4 run; this does not establish that it can never recur. Chapter 1, the previous known-good quality reference, was regenerated through the current production pipeline and accepted again. Unicode filename export, progress, elapsed time, final WAV validation, and Open Folder were also confirmed.
-- This acceptance is manual end-to-end and listening evidence, separate from model-free tests. Neither the UI nor this milestone modifies the frozen backend. Next work: repository cleanup as its own milestone; retain unrelated evaluation artifacts and baseline evidence until separately reviewed.
+- This acceptance is manual end-to-end and listening evidence, separate from model-free tests. Neither the UI nor this milestone modifies the frozen backend. Repository cleanup is under way as its own milestone; retain unrelated evaluation artifacts and baseline evidence until separately reviewed.
 
 ### Future user-facing audio format
 
 Keep WAV/PCM inside the validated backend for synthesis, exact assembly, validation, and resumability. A future product output should support desirably named `.mp3` audiobook files, consistent with the prior Luvvoice workflow: **validated final WAV → encode/export MP3 → expose MP3 as the normal user-facing audiobook file**. MP3 conversion is not implemented in this milestone; the canonical backend WAV remains unchanged.
 
-## Completed milestone: A — Capture the MeloTTS baseline
+## Repository cleanup (current milestone)
+
+Batch 1 removed 88 verified-empty root temporary directories and committed only the `.gitignore` additions for `.DS_Store` and `Thumbs.db` (`d1f2161`). Further cleanup remains under review; preserve all untracked evaluation scripts, tests, and chapter inputs until separately classified. The accepted backend and UI remain frozen.
+
+## Historical milestone A — MeloTTS baseline capture
 
 - **Complete:** environment/hardware capture, seven diagnostic inputs, evaluation runner, GPU baseline, and manual listening review.
 - **19/19 model-free tests passing** at milestone completion.
@@ -51,26 +55,26 @@ Final run: `outputs/evaluation/melo_baseline_2026-09-13_02-30-28/manifest.json` 
 | Transformers / NumPy | 4.27.4 / 1.26.4 |
 | Mandarin settings | `language=ZH`, `speaker_name=ZH`, `speed=1.0`; automatic CUDA/CPU selection |
 
-Full versions, source/checkpoint hashes, and capture limitations: [melo-environment.json](../evaluation/baseline/melo-environment.json) and [melo-pip-freeze.txt](../evaluation/baseline/melo-pip-freeze.txt). These are historical records; their initial pending-validation notes predate the completed GPU review. Fresh-environment recreation remains unverified. The root README/requirements use `melo-tts`, while the installed distribution is `melotts`; do not reinstall the working environment to resolve this documentation discrepancy.
+Full versions, source/checkpoint hashes, and capture limitations: [melo-environment.json](../evaluation/baseline/melo-environment.json) and [melo-pip-freeze.txt](../evaluation/baseline/melo-pip-freeze.txt). These are historical records; their initial pending-validation notes predate the completed GPU review. Fresh-environment recreation remains unverified. The legacy `requirements.txt` uses `melo-tts`, while the installed distribution is `melotts`; do not reinstall the working environment to resolve this documentation discrepancy.
 
-## Known limitations and evaluation status
+## Historical MeloTTS limitations and evaluation status
 
 - `_` is a confirmed minimal preprocessing failure. `chapter_01.txt` triggers `AssertionError` in installed `melo/text/chinese.py` after mixed-language normalization retains the underscore. Preserve the original failing corpus case.
 - `100%` normalizes to `一百`, losing percentage meaning; `01` loses its leading zero. Numbers and special formatting need future normalization work.
-- Short-passage stability and voice consistency do not establish multi-chapter reliability. Application-level chunking, stitching, resumable jobs, and pronunciation overrides are future work.
-- Existing GUI threading issues and backend edge cases remain unchanged; do not fold their repair into model bring-up.
+- At the Melo baseline milestone, short-passage stability did not establish multi-chapter reliability; application-level chunking, stitching, and resumable jobs were still future work. The accepted CosyVoice backend now has unit planning, exact assembly, and resume. Pronunciation overrides remain future work.
+- Legacy Melo GUI threading issues and backend edge cases were outside the baseline and model bring-up milestones.
 - The runner continues after failed trials, records exact inputs/settings/timings/tracebacks, uses descriptive WAV filenames, and summarizes results. `--open-output` is optional.
 - Corpus: [mandarin_diagnostics.json](../evaluation/inputs/mandarin_diagnostics.json). Runner: [run_melo_smoke.py](../evaluation/run_melo_smoke.py). Model-free tests: [test_melo_baseline.py](../tests/test_melo_baseline.py).
 
-## Decisions and model strategy
+## Historical model selection decisions
 
 - Keep the original MeloTTS implementation, environment, and benchmark evidence for reproducible comparisons.
 - **CosyVoice3 (`Fun-CosyVoice3-0.5B-2512`) is the selected production foundation.** Melo remains the historical baseline and legacy GUI backend. The separate native Windows audiobook UI invokes CosyVoice through WSL.
 - Narrator identity is satisfactory with the preferred approximately 9.8-second Xiaoxiao-style reference. Milestone B model/voice searching is closed.
 - Use the same diagnostic source text across models and record model-specific settings. Keep Azure Xiaoxiao as the quality reference for naturalness, pacing, pronunciation, and audiobook suitability.
-- Choose the final backend through evidence, including narrator consistency and sustained listening, rather than GUI integration or short demos alone.
+- The final backend was chosen through evidence, including narrator consistency and sustained listening.
 
-## Completed milestone: B — CosyVoice Bring-Up
+## Historical milestone B — CosyVoice bring-up
 
 - Isolated WSL2 Ubuntu 22.04 installation: `/home/jay/CosyVoice`; Conda `cosyvoice-b`, Python 3.10.21, PyTorch/TorchAudio 2.3.1+cu121. CUDA inference validated on the RTX 4070 Ti SUPER.
 - Model: `/home/jay/CosyVoice/pretrained_models/Fun-CosyVoice3-0.5B`; `load_trt=False`, `load_vllm=False`, `fp16=False`, WeText frontend. DeepSpeed was intentionally removed after an inference import required `CUDA_HOME`; do not reinstall it unless training becomes necessary.
@@ -81,20 +85,20 @@ Full versions, source/checkpoint hashes, and capture limitations: [melo-environm
 
 Full findings, setup provenance limits, historical float-WAV compatibility failure, reference comparison, and reproduction: [COSYVOICE_MILESTONE_B.md](../evaluation/COSYVOICE_MILESTONE_B.md). Measured run: [manifest.json](../outputs/evaluation/cosyvoice_baseline_2026-09-13_15-34-53/manifest.json) (local, Git-ignored). The closeout runner adds reference CLI/provenance and clearer failure accounting; historical manifests remain unchanged. No new test suite or closeout GPU rerun.
 
-## Completed milestone: C — Audiobook Narration & Prosody Pipeline
+## Historical milestone C — Audiobook narration and prosody
 
 - Coherent-passage generation remains preferred. Hard sentence-by-sentence generation produced undesirable performance resets, while whitespace/newlines did not reliably control prosody.
 - A targeted **140 ms** silence addition improved deficient or borderline period pauses without materially changing already-good pauses. Multiple repairs remained natural.
 - [repair_pause.py](../evaluation/repair_pause.py) performs sample-preserving quiet-valley insertion near a supplied timestamp; [apply_pause_plan.py](../evaluation/apply_pause_plan.py) safely applies manual multi-boundary plans against original-audio coordinates.
 - Separately generated scenes retained narrator identity and joined without awkwardness or artifacts. In the final user listening comparison, **0 ms of extra inserted silence was preferred**; 700 and 1000 ms both felt too long. Zero extra silence preserves the natural trailing and leading silence already present in the two generated clips.
-- Production scene policy: join separately generated scenes with 0 ms added silence by default and add silence only when listening to that specific join justifies it.
+- Historical scene policy: join separately generated scenes with 0 ms added silence by default and add silence only when listening to that specific join justifies it.
 - Artifact/repetition policy: flag and regenerate the affected semantic chunk with the same narrator/settings; do not build or apply a complex waveform-repair model during this milestone.
 - The quiet-region heuristic missed a known boundary by approximately 398 ms. The Mandarin CTC experiment missed it by approximately 657 ms despite correct slice timing, resampling, and frame-spacing mechanics. Both remain evaluation-only; automatic alignment is deferred.
 - **90/90 model-free tests passed** in the isolated WSL `tts-align` environment after the closeout documentation changes on 2026-09-15. No model or GPU synthesis was invoked by this suite.
 
 Full findings, exact scene-break text, user listening judgments, production/evaluation boundaries, rejected alignment results, and future work: [COSYVOICE_MILESTONE_C.md](../evaluation/COSYVOICE_MILESTONE_C.md).
 
-## Completed milestone: D — Production Audiobook Backend
+## Historical milestone D — Scene-workflow audiobook backend
 
 - D1 validates one UTF-8 chapter, preserves an exact `source.txt`, and creates a deterministic explicit-marker scene plan with stable IDs, source spans, and hashes.
 - D2 generates and validates scene WAV attempts through one initialized CosyVoice3 adapter while recording backend, model, environment, narrator, and artifact provenance.
@@ -102,13 +106,13 @@ Full findings, exact scene-break text, user listening judgments, production/eval
 - D4 integrates the validated manual pause-plan workflow and exact PCM chapter assembly. Assembly preserves natural clip silence and adds 0 ms extra silence.
 - D5 adds the end-to-end `run` command and explicit seeded regeneration. Seeded attempts record their process-wide Python, NumPy, CPU Torch, and CUDA Torch random-state policy. Duplicate seeded takes remain historical attempts and do not replace the prior selection.
 - D5 real acceptance processed a three-scene Mandarin chapter through planning, CosyVoice3 generation, targeted seeded regeneration, and assembly. Boundary diagnostics confirmed that chapter assembly was sample-exact; a brief boundary-area noise was already present in a generated scene's leading silence and was addressed through targeted regeneration.
-- Production artifact policy: listen or detect the affected scene, request one explicit seeded regeneration, validate it, then reassemble. Do not use automatic random retries.
+- Historical scene artifact policy: listen or detect the affected scene, request one explicit seeded regeneration, validate it, then reassemble. This predates the accepted schema-5 unit retry policy.
 - A structurally valid WAV is not proof of perceptual quality. Listening remains necessary for narration artifacts, repetitions, pronunciation, pacing, and boundary perception.
 - Source snapshots, generation attempts, repairs, selections, hashes, and assembly frame offsets are preserved in the run manifest. Regeneration invalidates repairs bound to an old selection and marks completed assembly stale.
 - The supported CLI is `python -B -m src.audiobook` with `plan`, `run`, `generate`, `resume`, `regenerate`, `repair`, and `assemble`. Practical commands and the run layout are documented in the root [README](../README.md).
 - **143/143 model-free tests passed** again during the D6 closeout in the isolated WSL `tts-align` environment. CLI help was also verified without loading CosyVoice.
 
-## Production policy
+## Historical scene-workflow policy (milestones C–D)
 
 - CosyVoice3 is the selected Mandarin audiobook backend. The preferred short narrator reference and isolated `cosyvoice-b` environment remain unchanged.
 - Prefer continuous coherent scenes. Use standalone `***` source lines for intentional semantic scene boundaries.
@@ -116,7 +120,7 @@ Full findings, exact scene-break text, user listening judgments, production/eval
 - Use the manual +140 ms period repair only for a confirmed sparse pause issue. Automatic punctuation inference and alignment remain deferred.
 - Treat perceptual artifacts as generation issues unless sample-level evidence identifies assembly behavior. Exact PCM assembly neither introduces nor repairs samples within a selected scene.
 
-## Completed milestone: E1 — Read-only existing-run inspector
+## Historical milestone E1 — Read-only existing-run inspector
 
 - Milestone E follows a thin local architecture: Tkinter/ttk presentation -> application/state interpretation -> the existing Milestone D backend and persisted run artifacts. The run manifest and artifacts remain the source of truth; there is no independent UI database.
 - E1 was the read-only inspector. The subsequently accepted user-facing UI adds new-run generation; scene regeneration/manual repair and recovery/product hardening remain outside its visible workflow.
@@ -132,11 +136,11 @@ Full findings, exact scene-break text, user listening judgments, production/eval
 
 The schema-5 unit path freezes and certifies frontend units, generates each frozen unit with a deterministic seed, and assembles selected unit PCM exactly. Step 2 real acceptance passed on the saved two-unit fixture: one warm CosyVoice3 model, two independent attempts, exact PCM assembly with zero injected silence, and unchanged selections/seeds/hashes after resume. Chapter-title punctuation was subsequently promoted as a recorded first-unit synthesis override.
 
-Step 3 adds a required content-QC gate for **new** schema-5 runs: a persistent audio-only ASR worker in `tts-align`, deterministic Han comparison, and the fixed contiguous expected deletion threshold of four. Atomic per-attempt sidecars bind the evidence; assembly requires passed evidence. Real acceptance passed on the two-unit fixture: both units passed, one worker served both, exact PCM assembly was preserved, and resume made no new TTS or ASR requests. CosyVoice and ASR CUDA execution completed without failure.
+Step 3 added a required content-QC gate for **new** schema-5 runs: a persistent audio-only ASR worker in `tts-align`, deterministic Han comparison, and the fixed contiguous expected deletion threshold of four. Atomic per-attempt sidecars bind the evidence; assembly requires passed evidence. Real acceptance passed on the two-unit fixture: both units passed, one worker served both, exact PCM assembly was preserved, and resume made no new TTS or ASR requests. CosyVoice and ASR CUDA execution completed without failure.
 
-Step 4 adds a persisted `bounded_content_qc_retries_v1` policy to new QC-enabled runs: at most three physical synthesis attempts per unit. Only a validated content rejection advances the logical take and its deterministic seed. An interrupted synthesis attempt reuses its logical take seed within the physical-attempt budget. QC infrastructure errors retry recognition on the same WAV; three valid rejections persist exhaustion, leave the unit unresolved, and block assembly. Rejected WAVs and sidecars remain append-only evidence. Existing Step 3 QC runs without the retry policy and Step 2 schema-5 runs without QC retain their recorded behavior; historical schemas 2–4 remain unchanged. Model-free tests cover these paths; the Chapter 1 full-chapter acceptance run recorded a confirmed omission in unit 66 and a successful second deterministic attempt.
+Step 4 added a persisted `bounded_content_qc_retries_v1` policy to new QC-enabled runs: at most three physical synthesis attempts per unit. Only a validated content rejection advances the logical take and its deterministic seed. An interrupted synthesis attempt reuses its logical take seed within the physical-attempt budget. QC infrastructure errors retry recognition on the same WAV; three valid rejections persist exhaustion, leave the unit unresolved, and block assembly. Rejected WAVs and sidecars remain append-only evidence. Existing Step 3 QC runs without the retry policy and Step 2 schema-5 runs without QC retain their recorded behavior; historical schemas 2–4 remain unchanged. Model-free tests cover these paths; the Chapter 1 full-chapter acceptance run recorded a confirmed omission in unit 66 and a successful second deterministic attempt.
 
-The accepted Windows UI now provides the simple paste → Generate → finished audiobook path over the validated schema-5 RL backend. The historical E1 inspector remains available for maintenance. Recovery controls, scene repair, and more elaborate controls are not part of the accepted main workflow; repository cleanup is the next separate milestone.
+The accepted Windows UI now provides the simple paste → Generate → finished audiobook path over the validated schema-5 RL backend. The historical E1 inspector remains available for maintenance. Recovery controls and scene repair are outside the accepted main UI workflow. Repository cleanup is the current separate milestone.
 
 Automatic alignment, automatic pause placement, perceptual artifact detection, random retry loops, crossfades, mastering, MP3 export, EPUB/PDF/DOCX ingestion, deployment, and cloud infrastructure remain separate future work.
 

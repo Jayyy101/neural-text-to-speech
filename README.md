@@ -1,6 +1,6 @@
-# Neural Multilingual Text-to-Speech System
+# Neural Multilingual TTS: Mandarin audiobook app
 
-A local Mandarin audiobook app. CosyVoice3 RL is the validated production generator; MeloTTS remains a preserved historical baseline.
+The accepted product is a local Mandarin audiobook app: a native Windows UI backed by the frozen CosyVoice3 RL chapter generator in WSL. The MeloTTS, VITS, XTTS, and Azure files document earlier baselines and experiments.
 
 ## Windows audiobook app
 
@@ -33,7 +33,9 @@ UTF-8 chapter text
 
 Scene boundaries are explicit standalone `***` lines. Text without markers is one scene; the pinned native CosyVoice frontend then freezes its synthesis units. The historical scene path remains available through `run --legacy-scenes` and existing run manifests.
 
-### Milestone responsibilities
+### Historical scene-workflow milestones
+
+Milestones D1 through D5 established the earlier scene workflow. The current default `run` path uses schema-5 certified units, described below; the scene workflow remains available for historical runs.
 
 | Milestone | Responsibility |
 |---|---|
@@ -121,7 +123,9 @@ New schema-5 runs require the fixed Mandarin content gate before a generated att
 
 For **new** QC-enabled runs, the persisted `bounded_content_qc_retries_v1` policy permits at most three total physical synthesis attempts per unit. A validated content rejection advances the logical take index and derives a new seed from the existing root/plan/unit/take policy; synthesis interruption can create another physical attempt with the same logical take and seed while the physical-attempt budget remains. Passed QC selects and stops. QC infrastructure errors, pending/running QC, and interrupted QC retry recognition on the existing WAV; a corrupt artifact or evidence fails closed. Three valid content rejections persist an exhausted state, leave the unit unresolved, and block assembly. Substitutions, insertions, CER, and deletions of 1–3 expected Han characters do not trigger synthesis retries. Earlier QC-enabled Step 3 runs without a retry-policy record retain their recorded no-retry behavior. Existing Step 2 schema-5 runs without QC retain their historical selection behavior. The validated whole-WAV ASR path remains limited to 30 seconds per unit. The Chapter 1 full-chapter acceptance run recorded a confirmed omission in unit 66 and a successful second deterministic attempt.
 
-### Run artifacts and state
+### Run artifacts and state (historical scene example)
+
+The layout below illustrates a scene-workflow run. Current schema-5 runs also store certified units, per-unit attempts, and content-QC sidecars under `units/`; their canonical final file is still `final/chapter.wav`.
 
 ```text
 outputs/audiobooks/<chapter_id>/<run_id>/
@@ -138,22 +142,22 @@ outputs/audiobooks/<chapter_id>/<run_id>/
 `-- final/chapter.wav
 ```
 
-The source snapshot is byte-exact. The manifest records source and plan hashes, source spans, backend and narrator provenance, every generation attempt, attempt-level random-state policy, selected attempts and repairs, WAV identities, and assembly frame offsets. Paths inside a run are relative where practical.
+The source snapshot is byte-exact. The manifest records source and plan hashes, source spans, backend and narrator provenance, generation attempts, selected artifacts, WAV identities, and assembly frame offsets. Historical scene runs also record scene repairs and their selections. Paths inside a run are relative where practical.
 
-Recovery preserves history. A successful regeneration selects its new valid attempt; a failure retains the previous valid selection. A seeded result identical to the prior selection is recorded as a duplicate and is not selected. Changing a selected attempt deselects any repair tied to the old attempt and marks an existing assembly stale. Old manifests without random-state metadata remain supported.
+In the historical scene workflow, recovery preserves history. A successful regeneration selects its new valid attempt; a failure retains the previous valid selection. A seeded result identical to the prior selection is recorded as a duplicate and is not selected. Changing a selected attempt deselects any repair tied to the old attempt and marks completed assembly stale. Old manifests without random-state metadata remain supported.
 
-Manual period repairs use the validated quiet-valley insertion workflow. A `period` entry without `add_ms` defaults to **+140 ms**. Plans must identify the selected `scene_id`, `attempt_id`, and source WAV SHA-256, so stale plans are rejected. Original generated WAVs remain unchanged.
+Historical scene-only manual period repairs use the validated quiet-valley insertion workflow. A `period` entry without `add_ms` defaults to **+140 ms**. Plans must identify the selected `scene_id`, `attempt_id`, and source WAV SHA-256, so stale plans are rejected. Original generated WAVs remain unchanged.
 
-Assembly selects a valid current repair when present and otherwise uses the selected generated attempt. It concatenates compatible PCM payloads exactly in planned order, preserves each clip's natural leading and trailing silence, and adds **0 ms extra silence**. It does not trim, fade, crossfade, resample, or normalize.
+Historical scene assembly selects a valid current repair when present and otherwise uses the selected generated attempt. It concatenates compatible PCM payloads exactly in planned order, preserves each clip's natural leading and trailing silence, and adds **0 ms extra silence**. It does not trim, fade, crossfade, resample, or normalize.
 
 ### Production policy and limitations
 
 - CosyVoice3 is the selected Mandarin backend; Azure Xiaoxiao remains a listening-quality reference.
-- Prefer coherent, continuous scene generation.
-- For audible artifacts, use: listen/detect -> explicit seeded regeneration -> reassemble.
-- A structurally valid WAV can still contain a perceptual generation artifact. Assembly does not create or remove artifacts already inside a selected scene.
+- The default path freezes native frontend units from coherent chapter text and assembles selected unit PCM exactly.
+- A structurally valid WAV can still contain a perceptual generation artifact. Listening remains part of acceptance; the exact assembly does not alter samples within selected units.
+- Explicit seeded scene regeneration is available only for historical scene runs, not the default schema-5 path.
 - Automatic punctuation alignment, forced alignment, pause inference, perceptual artifact detection, random retry loops, mastering, MP3 export, and document ingestion remain deferred.
-- The current backend expects prepared UTF-8 chapter text with deliberate scene markers.
+- The backend accepts UTF-8 chapter text; standalone `***` markers are optional intentional scene boundaries.
 
 ### Local interface boundary
 
@@ -176,173 +180,25 @@ python -B -m src.audiobook regenerate --help
 
 ---
 
-## Project Overview
+## Historical baselines and experiments
 
-The goal of this project is to build an end-to-end multilingual TTS application that can:
+These files remain for reproducibility and are outside the accepted CosyVoice audiobook app:
 
-- accept English and Chinese text input
-- generate natural-sounding speech using a neural TTS model
-- run locally without depending on a commercial TTS API
-- save generated speech as timestamped WAV files
-- provide a simple GUI for user interaction
+| Files | Historical role |
+|---|---|
+| `src/generate_melo.py`, `src/gui.py` | Preserved Windows MeloTTS backend and English/Chinese Tkinter GUI. Launch the legacy GUI with `python -B src/gui.py` in its existing `melo` environment. |
+| `src/generate.py` | Earlier English VITS prototype. |
+| `src/xtts.py` | XTTS multilingual experiment. |
+| `src/generate_azure.py` | Azure Neural TTS quality benchmark; Xiaoxiao remains a listening reference. |
 
-Azure Neural TTS was used only as a quality benchmark. XTTS was tested as a multilingual experiment. The earlier English VITS version was used as the baseline prototype.
+The root `requirements.txt` describes the historical Melo GUI, not the WSL CosyVoice production environment. It is not a validated lockfile for recreating the captured `melo` environment. The Melo baseline, including measured results and known failures, is documented in [evaluation/README.md](evaluation/README.md); its environment capture is under `evaluation/baseline/`. Generated audio and run evidence under `outputs/` are local and Git-ignored.
 
----
-
-## Historical MeloTTS application
-
-The existing application uses:
-
-- **MeloTTS** as the main speech synthesis backend
-- **Tkinter** for the graphical user interface
-- **PyTorch with CUDA** for GPU-accelerated inference
-- **Timestamped WAV outputs** saved to the `outputs/` folder
-
-The GUI allows users to:
-
-- choose a language: English or Chinese
-- choose a speaker
-- adjust speech speed
-- type or clear input text
-- generate speech
-- open the generated audio file
-- view status updates while speech is being generated
-
----
-
-## Project Files
-
-```text
-src/
-├── generate.py          # older English VITS baseline prototype
-├── xtts.py              # XTTS multilingual experiment
-├── generate_azure.py    # Azure Neural TTS benchmark
-├── generate_melo.py     # preserved MeloTTS backend
-└── gui.py               # existing Tkinter GUI (MeloTTS)
-```
-
----
-
-## Features
-
-- Local neural TTS generation
-- English text-to-speech support
-- Mandarin Chinese text-to-speech support
-- Mixed Chinese-English text support
-- Speaker selection
-- Speed control
-- GUI-based input and playback
-- Timestamped WAV output files
-- Model caching for faster repeated generation
-- Progress indicator during synthesis
-
----
-
-## System
-
-Tested on:
-
-- GPU: NVIDIA GeForce RTX 4070 Ti SUPER
-- CPU: Ryzen 7 7800X3D
-- RAM: 32GB
-- Python: 3.10
-- OS: Windows 10
-
----
-
-## Setup
-
-Create and activate the conda environment:
-
-```bash
-conda create -n melo python=3.10
-conda activate melo
-```
-
-Install PyTorch with CUDA support:
-
-```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-```
-
-Install MeloTTS:
-
-```bash
-pip install melo-tts
-```
-
-Depending on the system, additional packages may be needed for Chinese text processing and audio generation.
-
-Make sure commands are run from the main project folder.
-
-For example, if cloned from GitHub:
-
-```bash
-cd neural-text-to-speech
-```
-
----
-
-## Run the historical MeloTTS GUI
-
-From the main project folder, run:
-
-```bash
-python src/gui.py
-```
-
-The GUI allows users to enter text, choose a language, select a speaker, adjust speed, generate speech, and open the most recent audio output.
-
-Generated audio files are saved in:
-
-```text
-outputs/
-```
-
-The `outputs/` folder is ignored by Git so generated WAV files are not uploaded to the repository.
-
----
-
-## Evaluation Summary
-
-The system was tested with English, Chinese, and mixed Chinese-English inputs. Testing focused on pronunciation quality, pacing, multilingual support, and inference time.
-
-| Test | Language | Speaker | Speed | Inference Time | Notes |
-|---|---|---|---:|---:|---|
-| English short sentence | EN | EN-Default | 1.0 | 2.538s | Good pronunciation, but slightly fast and struggled with “MeloTTS.” |
-| English paragraph | EN | EN-Default | 1.0 | 0.266s | Clear pronunciation and better pauses. |
-| Chinese sentence | ZH | ZH | 1.0 | 2.640s | Good pronunciation and pauses, but slightly fast. |
-| Mixed Chinese-English | ZH | ZH | 1.0 | 0.476s | Chinese sounded strong; English words had a noticeable Chinese accent. |
-| English paragraph slower | EN | EN-Default | 0.9 | 0.334s | Pacing sounded better than 1.0. |
-| Chinese sentence slower | ZH | ZH | 0.9 | 0.190s | Still slightly fast; 0.8 sounded better. |
-
-Repeated generation became faster because the backend caches loaded models during the same GUI session.
-
----
-
-## Current Limitations
-
-- Mixed Chinese-English input works best with the Chinese model, but English words may sound accented.
-- Some technical terms, such as “MeloTTS,” may need input formatting to improve pronunciation.
-- Speech speed may need adjustment depending on the language and input length.
-- The system currently runs best on the configured Windows GPU environment.
-- The GUI is local only and has not yet been deployed as a web application.
-
----
-
-## Future Improvements
-
-- Add a web frontend using Flask or FastAPI so the system can be accessed from other devices.
-- Deploy the backend on a local or cloud GPU server for remote use.
-- Improve pronunciation handling for technical words and mixed-language input.
-- Add more detailed evaluation metrics for pronunciation quality, speed, and user feedback.
-- Compare MeloTTS more directly against Azure Neural TTS, XTTS, and the earlier VITS baseline.
-- Package the app as a desktop application for easier use.
+Future product work includes MP3 export from a validated final WAV. Repository cleanup is a separate ongoing milestone; preserve baseline evidence and unrelated evaluation work until reviewed.
 
 ---
 
 ## Author
 
-Jay Ma  
+Jay Ma
+
 GitHub: [Jayyy101](https://github.com/Jayyy101)
