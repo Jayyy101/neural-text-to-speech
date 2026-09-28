@@ -71,10 +71,10 @@ def _attempt_text(attempt):
 class AudiobookInspector:
     def __init__(self, root, initial_directory=None):
         self.root = root
-        self.root.title("Audiobook Generator")
+        self.root.title("Local Mandarin Audiobook Generator")
         scale = float(self.root.tk.call("tk", "scaling"))
         # Keep the fixed controls visible even when Windows uses larger text scaling.
-        minimum_height = max(620, round(350 + 175 * scale))
+        minimum_height = max(620, round(365 + 175 * scale))
         self.root.minsize(720, minimum_height)
         if initial_directory is None:
             width = max(720, min(960, self.root.winfo_screenwidth() - 80))
@@ -102,20 +102,26 @@ class AudiobookInspector:
     def _build(self):
         style = ttk.Style(self.root)
         style.configure(".", font=("Segoe UI", 10))
-        style.configure("Title.TLabel", font=("Segoe UI", 19, "bold"))
+        style.configure("Title.TLabel", font=("Segoe UI", 18, "bold"))
+        style.configure("Subtitle.TLabel", font=("Segoe UI", 10), foreground="#5b6871")
         style.configure("Section.TLabel", font=("Segoe UI", 10, "bold"))
-        style.configure("Status.TLabel", font=("Segoe UI", 11, "bold"))
-        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(18, 9))
+        style.configure("Status.TLabel", font=("Segoe UI", 11, "bold"),
+                        foreground="#254d60")
+        style.configure("Secondary.TLabel", font=("Segoe UI", 9), foreground="#5b6871")
+        style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"),
+                        foreground="#1b5267", padding=(20, 10))
 
-        generation = ttk.Frame(self.root, padding=20)
+        generation = ttk.Frame(self.root, padding=(24, 14))
         generation.pack(fill=tk.BOTH, expand=True)
         generation.columnconfigure(0, weight=1)
         generation.rowconfigure(5, weight=1, minsize=100)
-        ttk.Label(generation, text="Audiobook Generator", style="Title.TLabel").grid(
+        ttk.Label(generation, text="Local Mandarin Audiobook Generator",
+                  style="Title.TLabel").grid(
             row=0, column=0, sticky=tk.W,
         )
-        ttk.Label(generation, text="Paste one chapter and choose its MP3 filename.").grid(
-            row=1, column=0, sticky=tk.W, pady=(2, 14),
+        ttk.Label(generation, text="Local CosyVoice3 audiobook generation",
+                  style="Subtitle.TLabel").grid(
+            row=1, column=0, sticky=tk.W, pady=(2, 16),
         )
 
         ttk.Label(generation, text="MP3 filename", style="Section.TLabel").grid(
@@ -123,7 +129,7 @@ class AudiobookInspector:
         )
         self.output_filename = tk.StringVar(value="audiobook.mp3")
         self.filename_entry = ttk.Entry(generation, textvariable=self.output_filename)
-        self.filename_entry.grid(row=3, column=0, sticky=tk.EW, pady=(5, 12))
+        self.filename_entry.grid(row=3, column=0, sticky=tk.EW, pady=(6, 14))
 
         ttk.Label(generation, text="Chapter text", style="Section.TLabel").grid(
             row=4, column=0, sticky=tk.W,
@@ -131,10 +137,12 @@ class AudiobookInspector:
         self.text_frame = ttk.Frame(generation)
         self.text_frame.columnconfigure(0, weight=1)
         self.text_frame.rowconfigure(0, weight=1)
-        self.text_frame.grid(row=5, column=0, sticky=tk.NSEW, pady=(5, 12))
+        self.text_frame.grid(row=5, column=0, sticky=tk.NSEW, pady=(7, 14))
         self.chapter_text = tk.Text(
             self.text_frame, height=8, wrap=tk.WORD, font=("Microsoft YaHei UI", 11),
-            padx=10, pady=10, undo=True,
+            padx=12, pady=10, undo=True, relief=tk.FLAT, borderwidth=0,
+            highlightthickness=1, highlightbackground="#c9d2d8",
+            highlightcolor="#4e798b",
         )
         text_scroll = ttk.Scrollbar(self.text_frame, orient=tk.VERTICAL,
                                     command=self.chapter_text.yview)
@@ -150,7 +158,7 @@ class AudiobookInspector:
         )
         self.generate_button.pack(side=tk.LEFT)
 
-        progress = ttk.LabelFrame(generation, text="Progress", padding=12)
+        progress = ttk.LabelFrame(generation, text="Generation progress", padding=12)
         progress.grid(row=7, column=0, sticky=tk.EW, pady=(16, 0))
         self.generation_progress = ttk.Progressbar(progress, mode="indeterminate")
         self.generation_progress.pack(fill=tk.X)
@@ -161,14 +169,16 @@ class AudiobookInspector:
         )
         self.generation_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.elapsed_time = tk.StringVar(value="Elapsed 00:00:00")
-        self.elapsed_label = ttk.Label(progress_heading, textvariable=self.elapsed_time)
+        self.elapsed_label = ttk.Label(progress_heading, textvariable=self.elapsed_time,
+                                       style="Secondary.TLabel")
         self.elapsed_label.pack(side=tk.RIGHT)
         self.finished_mp3 = tk.StringVar()
         ttk.Label(generation, text="Completed MP3", style="Section.TLabel").grid(
-            row=8, column=0, sticky=tk.W, pady=(16, 5),
+            row=8, column=0, sticky=tk.W, pady=(15, 5),
         )
         self.completed_mp3_entry = ttk.Entry(
             generation, textvariable=self.finished_mp3, state="readonly",
+            font=("Segoe UI", 9),
         )
         self.completed_mp3_entry.grid(
             row=9, column=0, sticky=tk.EW,
@@ -178,7 +188,8 @@ class AudiobookInspector:
         )
         self.open_folder_button.grid(row=10, column=0, sticky=tk.W, pady=(10, 0))
         self.job_log = tk.StringVar()
-        ttk.Label(generation, textvariable=self.job_log, anchor=tk.W).grid(
+        ttk.Label(generation, textvariable=self.job_log, anchor=tk.W,
+                  style="Secondary.TLabel").grid(
             row=11, column=0, sticky=tk.EW, pady=(8, 0),
         )
 
