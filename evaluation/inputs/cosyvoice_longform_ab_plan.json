@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "experiment_id": "cosyvoice_longform_ab",
+  "source_path": "test-shentongzhe/神通者01.txt",
+  "source_sha256": "146051b562c7dc5c350a4ba8f7c532f7bf347b71437b664f6a45e8ba1c0b4ee3",
+  "source_character_count": 7025,
+  "prepared_moderate_sha256": "7da6fa757f97adbefd7ea564671021da9ddad8a7e6ae5b17aca3f5ff7e3ead50",
+  "chapter_id": "shentongzhe_ch01_longform_ab",
+  "scene_marker": "***",
+  "title_opening_policy": "Keep the title and opening action together in scene 1. Do not create a short title-only scene; evaluate title separation within the coherent opening passage.",
+  "moderate_boundaries": [
+    {
+      "start_character": 938,
+      "starts_with": "为此，连陆青炎",
+      "reason": "Background shifts from introducing the gifted disciple to the family's sacrifices and Black Rain resource pressure."
+    },
+    {
+      "start_character": 1907,
+      "starts_with": "两人自后院走廊而入",
+      "reason": "Location and mood shift as the siblings enter the main hall."
+    },
+    {
+      "start_character": 2812,
+      "starts_with": "“呵呵，这雷火馆的人",
+      "reason": "A new antagonist voice interrupts the withdrawal confrontation."
+    },
+    {
+      "start_character": 3979,
+      "starts_with": "而此时，陆瑾苍老的面庞",
+      "reason": "The clash resolves and the visitors' 大金乌馆 identity and status become the focus."
+    },
+    {
+      "start_character": 4995,
+      "starts_with": "她话音顿了顿，突然一转",
+      "reason": "The withdrawal is conceded before the antagonist introduces a second demand."
+    },
+    {
+      "start_character": 6099,
+      "starts_with": "章岳似是有些怅然",
+      "reason": "The coercion inside the hall ends and the departing pair/exterior epilogue begins."
+    }
+  ],
+  "seeds": [
+    2026091702,
+    2026091703
+  ],
+  "execution_order": [
+    {
+      "order": 1,
+      "condition": "giant",
+      "seed": 2026091702
+    },
+    {
+      "order": 2,
+      "condition": "moderate",
+      "seed": 2026091702
+    },
+    {
+      "order": 3,
+      "condition": "moderate",
+      "seed": 2026091703
+    },
+    {
+      "order": 4,
+      "condition": "giant",
+      "seed": 2026091703
+    }
+  ],
+  "prompt_wav": "/home/jay/CosyVoice/reference_audio/xiaoxiao_narrator_short.wav",
+  "prompt_transcript_file": "/home/jay/CosyVoice/reference_audio/xiaoxiao_narrator_short.txt"
+}

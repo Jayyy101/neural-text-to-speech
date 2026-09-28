@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "purpose": "blind_fixed_cleanup_event_aware_pause_probe",
+  "source_chapter_sha256": "a3dce3fbb9d6cdf333af32dcc260b9b9e02ba3458f865f137b2f747437ebba1b",
+  "context_seconds_each_side": 4,
+  "seams": [
+    {
+      "after_unit_number": 5,
+      "expected_structure": "paragraph_break",
+      "left_trim_ms": 190,
+      "right_trim_ms": 0,
+      "retained_natural_breath": false,
+      "expected_unchanged_Q_ms": 210,
+      "targets_ms": [null, 200, 300, 450]
+    },
+    {
+      "after_unit_number": 58,
+      "expected_structure": "paragraph_break",
+      "left_trim_ms": 160,
+      "right_trim_ms": 0,
+      "retained_natural_breath": false,
+      "expected_unchanged_Q_ms": 90,
+      "targets_ms": [null, 200, 300, 450]
+    },
+    {
+      "after_unit_number": 69,
+      "expected_structure": "paragraph_break",
+      "left_trim_ms": 120,
+      "right_trim_ms": 400,
+      "retained_natural_breath": true,
+      "event_marks_ms_in_original_wavs": {
+        "left_speech_end": 19820,
+        "right_natural_breath_start": 500,
+        "right_natural_breath_end": 690,
+        "right_speech_onset": 740
+      },
+      "expected_unchanged_Qpre_ms": 120,
+      "expected_B_ms": 190,
+      "expected_Qpost_ms": 50,
+      "targets_ms": [null, 200, 300, 450]
+    },
+    {
+      "after_unit_number": 53,
+      "expected_structure": "inline",
+      "left_trim_ms": 0,
+      "right_trim_ms": 0,
+      "retained_natural_breath": false,
+      "acoustic_screening": "clean_candidate_not_yet_listening_confirmed",
+      "expected_unchanged_Q_ms": 160,
+      "targets_ms": [null, 150, 250, 350]
+    }
+  ]
+}

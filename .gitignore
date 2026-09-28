@@ -8,3 +8,6 @@ venv/
 .ipynb_checkpoints/
 .DS_Store
 Thumbs.db
+test-shentongzhe/*.txt
+/tests/test_cosyvoice_longform_ab.py
+/evaluation/inputs/cosyvoice_prompt_conditioning_ab.json

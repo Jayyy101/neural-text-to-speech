@@ -2,6 +2,16 @@
 
 This directory preserves the existing MeloTTS system before audiobook model experiments. It adds diagnostic inputs, metadata, a separate smoke runner, and standard-library regression tests. It does not change `src/generate_melo.py`, `src/gui.py`, their defaults, or the installed environment. No other TTS model is required.
 
+## Historical CosyVoice experiments
+
+The current accepted audiobook app is described in the root [README](../README.md) and [project state](../docs/PROJECT_STATE.md). The following runners preserve earlier research protocols; they are not alternate production entry points. They remain in `evaluation/` because their `evaluation.*` imports and repository-root calculations use these paths. Saved WAVs and manifests under `outputs/evaluation/` are local and Git-ignored, so a fresh clone has the code and non-prose plans but not the original run evidence.
+
+- Prompt, seed, and chapter experiments: `run_cosyvoice_prompt_conditioning_ab.py`, `run_cosyvoice_rng_sweep.py`, `run_cosyvoice_multiunit_path_ab.py`, `run_cosyvoice_longform_ab.py`, `run_cosyvoice_cr_format_ab.py`, `run_cosyvoice_clean12.py`, and `run_cosyvoice_clean12_retries.py`. The long-form design is preserved in `inputs/cosyvoice_longform_ab_plan.json`; it records hashes, scene boundaries, and short source anchors, not the full chapter. The prompt-conditioning plan `inputs/cosyvoice_prompt_conditioning_ab.json` contains substantial novel prose and stays local-only.
+- Seam and pause follow-ups: `diagnose_unit_seams.py` and `run_event_pause_ab.py`. The fixed event-pause measurements are preserved in `inputs/shentongzhe_ch01_fixed_cleanup_pause_probe.json`. These tools need the matching local accepted run and use the tracked seam helpers.
+- ASR research follow-ups: `run_mandarin_asr_clean12_validation.py`, `run_mandarin_asr_endpoint_feasibility.py`, and `run_mandarin_asr_history_audit.py`. They depend on saved local audio or reports and the tracked `run_mandarin_asr_unit09_feasibility.py` helper, which is also imported by the accepted content-QC worker.
+
+The real `test-shentongzhe/*.txt` chapters are local-only manual acceptance inputs. The as-is `tests/test_cosyvoice_longform_ab.py` also stays local-only because one test reads Chapter 1. Both paths and the prompt-conditioning JSON are ignored narrowly in the root `.gitignore`. A fresh clone cannot rerun chapter-bound experiments without separately supplied local inputs and saved evidence; ordinary automated tests should use small synthetic fixtures.
+
 ## Milestone A status: complete
 
 The real Windows GPU baseline run and the user's manual listening review are complete. The final run, [melo_baseline_2026-09-13_02-30-28/manifest.json](../outputs/evaluation/melo_baseline_2026-09-13_02-30-28/manifest.json), records **12 successful synthesis trials, 2 expected mixed-text failures, and 0 incomplete trials** across seven cases with two repetitions each. The linked manifest and audio are local, Git-ignored artifacts.
