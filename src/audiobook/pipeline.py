@@ -12,6 +12,7 @@ import wave
 
 from .cosyvoice import file_sha256, wav_info
 from .planning import build_plan
+from . import profiling
 
 
 GENERATION_SCHEMA_VERSION = 4
@@ -71,14 +72,25 @@ def error_record(error):
 
 def save_manifest(path, manifest):
     """Atomically persist a run, tolerating a brief OneDrive destination lock."""
-    payload = json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    with profiling.span("manifest.save"):
+        return _save_manifest(path, manifest)
+
+
+def _save_manifest(path, manifest):
+    with profiling.span("manifest.serialize") as timing:
+        payload = json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+        if profiling.enabled():
+            timing.add(payload_bytes=len(payload.encode("utf-8")))
     temporary = path.with_name(path.name + f".partial.{os.getpid()}")
-    temporary.write_text(payload, encoding="utf-8")
+    with profiling.span("manifest.write"):
+        temporary.write_text(payload, encoding="utf-8")
     for retry in range(20):
         try:
-            temporary.replace(path)
+            with profiling.span("manifest.replace", retry=retry):
+                temporary.replace(path)
             return
         except PermissionError:
+            profiling.annotate(lock_retries=retry + 1)
             # A delayed success can be reported after the temporary vanishes.
             if not temporary.exists():
                 try:
@@ -86,17 +98,28 @@ def save_manifest(path, manifest):
                         return
                 except PermissionError:
                     pass
-                temporary.write_text(payload, encoding="utf-8")
+                with profiling.span("manifest.write", retry=retry + 1):
+                    temporary.write_text(payload, encoding="utf-8")
             if retry == 19:
                 raise
-            time.sleep(0.5)
+            with profiling.span("manifest.lock_wait", retry=retry + 1):
+                time.sleep(0.5)
 
 
 def read_manifest(run_directory):
+    with profiling.span("manifest.read"):
+        return _read_manifest(run_directory)
+
+
+def _read_manifest(run_directory):
     run_directory = Path(run_directory).expanduser().resolve()
     manifest_path = run_directory / "manifest.json"
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        with profiling.span("manifest.read_bytes") as timing:
+            payload = manifest_path.read_text(encoding="utf-8")
+            timing.add(characters=len(payload))
+        with profiling.span("manifest.parse"):
+            manifest = json.loads(payload)
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise GenerationError(f"Cannot read audiobook manifest: {error}") from error
     if not isinstance(manifest, dict):

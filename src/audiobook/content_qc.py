@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import unicodedata
 
+from . import profiling
+
 
 MODEL_ID = "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn"
 MODEL_REVISION = "99ccb2737be22b8bb50dcfcc39ad4d567fb90cfd"
@@ -214,6 +216,10 @@ class ASRWorkerClient:
     def start(self):
         if self.process is not None:
             return self.model
+        with profiling.span("asr.worker_startup"):
+            return self._start()
+
+    def _start(self):
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.log = self.log_path.open("a", encoding="utf-8")
         self.process = subprocess.Popen(
@@ -233,12 +239,19 @@ class ASRWorkerClient:
         return self.model
 
     def recognize(self, request):
+        request_id = request.get("request_id") if isinstance(request, dict) else None
+        with profiling.span("asr.round_trip", request_id=request_id):
+            return self._recognize(request)
+
+    def _recognize(self, request):
         if set(request) != {"type", "request_id", "audio_path", "wav_sha256"}:
             raise ValueError("ASR request contains unsupported fields.")
         self.start()
-        self.process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
-        self.process.stdin.flush()
-        line = self.process.stdout.readline()
+        with profiling.span("asr.request_write"):
+            self.process.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
+            self.process.stdin.flush()
+        with profiling.span("asr.response_wait"):
+            line = self.process.stdout.readline()
         if not line:
             raise RuntimeError("ASR worker exited during recognition.")
         response = json.loads(line)
@@ -251,6 +264,10 @@ class ASRWorkerClient:
         return response
 
     def close(self):
+        with profiling.span("asr.worker_shutdown"):
+            return self._close()
+
+    def _close(self):
         if self.process is not None:
             try:
                 self.process.stdin.close()

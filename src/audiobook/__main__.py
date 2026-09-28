@@ -1,5 +1,10 @@
 """Command-line entry point for audiobook backend workflows."""
 
+from . import profiling
+
+profiling.mark("cli.entry")
+_startup_import = profiling.begin("cli.startup_imports")
+
 import argparse
 from pathlib import Path
 
@@ -22,6 +27,8 @@ from .unit_planning import prepare_synthesis_unit_run
 from .unit_execution import assemble_units, generate_units
 from .content_qc import DEFAULT_ASR_PYTHON
 from .workflow import run_chapter, run_unit_chapter
+
+_startup_import.finish()
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -198,18 +205,20 @@ def main(argv=None):
     if args.command == "run":
         try:
             if args.legacy_scenes:
-                adapter = create_adapter(args)
+                with profiling.span("cli.preflight"):
+                    adapter = create_adapter(args)
                 run_directory, manifest = run_chapter(
                     args.source, args.chapter_id, args.run_id,
                     args.output_root, adapter,
                 )
             else:
-                model_dir = unit_model_dir(args)
-                adapter = create_adapter(args, model_dir=model_dir)
-                frontend = CosyVoiceFrontendAdapter(
-                    args.cosyvoice_root, model_dir,
-                    offline_cached_wetext=args.model_dir is None,
-                )
+                with profiling.span("cli.preflight"):
+                    model_dir = unit_model_dir(args)
+                    adapter = create_adapter(args, model_dir=model_dir)
+                    frontend = CosyVoiceFrontendAdapter(
+                        args.cosyvoice_root, model_dir,
+                        offline_cached_wetext=args.model_dir is None,
+                    )
                 run_directory, manifest = run_unit_chapter(
                     args.source, args.chapter_id, args.run_id,
                     args.output_root, frontend, adapter,
@@ -338,4 +347,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    with profiling.span("cli.command"):
+        _exit_code = main()
+    profiling.flush()
+    raise SystemExit(_exit_code)

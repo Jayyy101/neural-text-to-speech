@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from evaluation.align_mandarin_ctc import ANALYSIS_RATE, read_analysis_audio
+from src.audiobook import profiling
 
 
 MODEL_ID = "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn"
@@ -124,20 +125,22 @@ def load_intended_after_inference():
 
 
 def load_asr_once():
-    import torch
-    from transformers import (
-        Wav2Vec2CTCTokenizer,
-        Wav2Vec2FeatureExtractor,
-        Wav2Vec2ForCTC,
-    )
+    with profiling.span("asr.runtime_imports"):
+        import torch
+        from transformers import (
+            Wav2Vec2CTCTokenizer,
+            Wav2Vec2FeatureExtractor,
+            Wav2Vec2ForCTC,
+        )
 
     require(torch.cuda.is_available(), "CUDA is unavailable")
     common = {"revision": MODEL_REVISION, "local_files_only": True}
-    tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(MODEL_ID, **common)
-    feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(MODEL_ID, **common)
-    model, loading = Wav2Vec2ForCTC.from_pretrained(
-        MODEL_ID, output_loading_info=True, **common
-    )
+    with profiling.span("asr.model_load"):
+        tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(MODEL_ID, **common)
+        feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(MODEL_ID, **common)
+        model, loading = Wav2Vec2ForCTC.from_pretrained(
+            MODEL_ID, output_loading_info=True, **common
+        )
     require(not loading.get("missing_keys") and not loading.get("mismatched_keys"),
             "ASR checkpoint has missing or mismatched weights")
     require(feature_extractor.sampling_rate == ANALYSIS_RATE,
@@ -148,7 +151,8 @@ def load_asr_once():
             "Model/tokenizer vocabulary sizes differ")
     require(getattr(model.config, "_commit_hash", None) == MODEL_REVISION,
             "Resolved ASR revision differs")
-    model.to("cuda").eval()
+    with profiling.span("asr.model_to_cuda"):
+        model.to("cuda").eval()
     return torch, tokenizer, feature_extractor, model, {
         "model_id": MODEL_ID,
         "requested_revision": MODEL_REVISION,
@@ -221,20 +225,24 @@ def infer_audio_only(corpus, torch, tokenizer, feature_extractor, model):
     stride = math.prod(model.config.conv_stride)
     frame_seconds = stride / ANALYSIS_RATE
     for item in corpus:
-        samples, audio = read_analysis_audio(item["path"])
-        inputs = feature_extractor(samples, sampling_rate=ANALYSIS_RATE, return_tensors="pt")
-        inputs = {key: value.to("cuda") for key, value in inputs.items()}
+        with profiling.span("asr.audio_preparation"):
+            samples, audio = read_analysis_audio(item["path"])
+        with profiling.span("asr.feature_extraction"):
+            inputs = feature_extractor(samples, sampling_rate=ANALYSIS_RATE, return_tensors="pt")
+            inputs = {key: value.to("cuda") for key, value in inputs.items()}
         torch.cuda.synchronize()
         started = time.perf_counter()
-        with torch.inference_mode():
-            logits = model(**inputs).logits[0]
-        frame_ids = logits.argmax(dim=-1).cpu().tolist()
-        torch.cuda.synchronize()
+        with profiling.span("asr.gpu_inference"):
+            with torch.inference_mode():
+                logits = model(**inputs).logits[0]
+            frame_ids = logits.argmax(dim=-1).cpu().tolist()
+            torch.cuda.synchronize()
         inference_seconds = time.perf_counter() - started
-        emitted = collapse_greedy_ids(frame_ids, model.config.pad_token_id)
-        raw_transcript, comparison, ignored = normalize_recognized(
-            emitted, tokenizer, frame_seconds
-        )
+        with profiling.span("asr.decoding"):
+            emitted = collapse_greedy_ids(frame_ids, model.config.pad_token_id)
+            raw_transcript, comparison, ignored = normalize_recognized(
+                emitted, tokenizer, frame_seconds
+            )
         results.append({
             **item,
             "audio": audio,

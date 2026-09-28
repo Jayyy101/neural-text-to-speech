@@ -12,6 +12,8 @@ import sys
 import time
 import wave
 
+from . import profiling
+
 
 PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
 SETTLED_SETTINGS = {
@@ -35,6 +37,11 @@ VALIDATED_FRONTEND_SHA256 = "4db610ce6bfa2a03e808e31232aa150d51de09a1ef7391d9b88
 
 def ensure_rl_model_view(cosyvoice_root, view_dir):
     """Expose the validated RL LLM without changing the installed model."""
+    with profiling.span("model.verify_rl_view"):
+        return _ensure_rl_model_view(cosyvoice_root, view_dir)
+
+
+def _ensure_rl_model_view(cosyvoice_root, view_dir):
     model = Path(cosyvoice_root).expanduser().resolve() / "pretrained_models/Fun-CosyVoice3-0.5B"
     checkpoint = model / "llm.rl.pt"
     if file_sha256(checkpoint) != VALIDATED_RL_SHA256:
@@ -62,7 +69,10 @@ def ensure_rl_model_view(cosyvoice_root, view_dir):
 
 
 def file_sha256(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    with profiling.span("io.file_hash", file_name=Path(path).name) as timing:
+        data = Path(path).read_bytes()
+        timing.add(bytes_read=len(data))
+        return hashlib.sha256(data).hexdigest()
 
 
 def git_head(repo):
@@ -267,6 +277,13 @@ def write_pcm16_wav(torchaudio, output_path, speech, sample_rate):
 
 def wav_info(path, expected_rate):
     """Validate a complete, nonempty mono PCM16 WAV at the expected rate."""
+    with profiling.span("io.wav_validation") as timing:
+        result = _wav_info(path, expected_rate)
+        timing.add(bytes_read=result["frames"] * result["sample_width_bytes"])
+        return result
+
+
+def _wav_info(path, expected_rate):
     with wave.open(str(path), "rb") as audio:
         frames = audio.getnframes()
         rate = audio.getframerate()
@@ -308,6 +325,10 @@ class CosyVoiceFrontendAdapter:
         self._metadata = None
 
     def initialize(self):
+        with profiling.span("model.planning_initialize"):
+            return self._initialize()
+
+    def _initialize(self):
         if self._model is not None:
             return json.loads(json.dumps(self._metadata))
 
@@ -329,23 +350,26 @@ class CosyVoiceFrontendAdapter:
                 raise FileNotFoundError(required)
 
         import_started = time.perf_counter()
-        torch, torchaudio, auto_model = load_cosyvoice_runtime(self.cosyvoice_root)
+        with profiling.span("model.runtime_imports"):
+            torch, torchaudio, auto_model = load_cosyvoice_runtime(self.cosyvoice_root)
         import_seconds = time.perf_counter() - import_started
         load_started = time.perf_counter()
-        model = create_cosyvoice_model(
-            auto_model, self.model_dir, self.settings,
-            offline_cached_wetext=self.offline_cached_wetext,
-        ) if self.offline_cached_wetext else create_cosyvoice_model(
-            auto_model, self.model_dir, self.settings,
-        )
+        with profiling.span("model.planning_load"):
+            model = create_cosyvoice_model(
+                auto_model, self.model_dir, self.settings,
+                offline_cached_wetext=self.offline_cached_wetext,
+            ) if self.offline_cached_wetext else create_cosyvoice_model(
+                auto_model, self.model_dir, self.settings,
+            )
         model_load_seconds = time.perf_counter() - load_started
         frontend = model.frontend
-        assets = configure_pinned_wetext_frontend(
-            frontend, self.wetext_asset_root
-        )
-        identity = _frontend_identity(
-            frontend, self.cosyvoice_root, self.model_dir, assets
-        )
+        with profiling.span("model.frontend_verification"):
+            assets = configure_pinned_wetext_frontend(
+                frontend, self.wetext_asset_root
+            )
+            identity = _frontend_identity(
+                frontend, self.cosyvoice_root, self.model_dir, assets
+            )
         if (self.offline_cached_wetext
                 and _canonical_sha256(identity) != VALIDATED_FRONTEND_SHA256):
             raise RuntimeError("Current native frontend differs from the validated RL configuration.")
@@ -382,24 +406,30 @@ class CosyVoiceFrontendAdapter:
             )
         if not isinstance(text, str) or not text.strip():
             raise ValueError("Synthesis-unit planning text must not be empty.")
-        result = self._frontend.text_normalize(
-            text, split=True, text_frontend=True
-        )
+        with profiling.span("planning.normalize", input_characters=len(text)):
+            result = self._frontend.text_normalize(
+                text, split=True, text_frontend=True
+            )
         return list(result)
 
     def normalize_heading(self, heading):
         """Use the same native frontend for an explicitly detected title."""
         if self._frontend is None:
             raise RuntimeError("CosyVoice frontend must be initialized before planning.")
-        result = self._frontend.text_normalize(
-            heading, split=False, text_frontend=True
-        )
+        with profiling.span("planning.normalize_heading", input_characters=len(heading)):
+            result = self._frontend.text_normalize(
+                heading, split=False, text_frontend=True
+            )
         if not isinstance(result, str) or not result:
             raise RuntimeError("Native chapter-title normalization is invalid.")
         return result
 
     def release(self):
         """Free the planning model before the synthesis model is loaded."""
+        with profiling.span("model.planning_release"):
+            return self._release()
+
+    def _release(self):
         self._frontend = None
         self._model = None
         gc.collect()
@@ -441,6 +471,10 @@ class CosyVoiceAdapter:
         return preprocess_synthesis_text(source_text)[1]
 
     def initialize(self):
+        with profiling.span("model.synthesis_initialize"):
+            return self._initialize()
+
+    def _initialize(self):
         if self._model is not None:
             return dict(self._metadata)
 
@@ -461,7 +495,8 @@ class CosyVoiceAdapter:
         )
         prompt_text = PROMPT_PREFIX + transcript
         import_started = time.perf_counter()
-        torch, torchaudio, auto_model = load_cosyvoice_runtime(self.cosyvoice_root)
+        with profiling.span("model.runtime_imports"):
+            torch, torchaudio, auto_model = load_cosyvoice_runtime(self.cosyvoice_root)
         import_seconds = time.perf_counter() - import_started
         if not torch.cuda.is_available():
             raise RuntimeError(
@@ -469,12 +504,13 @@ class CosyVoiceAdapter:
             )
 
         load_started = time.perf_counter()
-        model = create_cosyvoice_model(
-            auto_model, self.model_dir, self.settings,
-            offline_cached_wetext=self.offline_cached_wetext,
-        ) if self.offline_cached_wetext else create_cosyvoice_model(
-            auto_model, self.model_dir, self.settings,
-        )
+        with profiling.span("model.synthesis_load"):
+            model = create_cosyvoice_model(
+                auto_model, self.model_dir, self.settings,
+                offline_cached_wetext=self.offline_cached_wetext,
+            ) if self.offline_cached_wetext else create_cosyvoice_model(
+                auto_model, self.model_dir, self.settings,
+            )
         model_load_seconds = time.perf_counter() - load_started
         self._torch = torch
         self._torchaudio = torchaudio
@@ -552,10 +588,11 @@ class CosyVoiceAdapter:
         """Reuse the warm model and certify its frontend against the unit plan."""
         metadata = self.initialize()
         if self._unit_frontend_identity is None:
-            assets = configure_pinned_wetext_frontend(self._model.frontend)
-            self._unit_frontend_identity = _frontend_identity(
-                self._model.frontend, self.cosyvoice_root, self.model_dir, assets
-            )
+            with profiling.span("model.frontend_verification"):
+                assets = configure_pinned_wetext_frontend(self._model.frontend)
+                self._unit_frontend_identity = _frontend_identity(
+                    self._model.frontend, self.cosyvoice_root, self.model_dir, assets
+                )
         return {
             **metadata,
             "frontend_identity_sha256": _canonical_sha256(
@@ -577,28 +614,33 @@ class CosyVoiceAdapter:
         if output_path.exists():
             raise FileExistsError(output_path)
         torch = self._torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.reset_peak_memory_stats()
-            torch.cuda.synchronize()
-        set_cosyvoice_random_seed(seed)
+        with profiling.span("tts.cache_prepare"):
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.reset_peak_memory_stats()
+                torch.cuda.synchronize()
+        with profiling.span("tts.seed_prepare"):
+            set_cosyvoice_random_seed(seed)
         started = time.perf_counter()
-        chunks = list(self._model.inference_zero_shot(
-            normalized_text, self._prompt_text, str(self.prompt_wav),
-            stream=self.settings["stream"], text_frontend=False,
-        ))
-        if len(chunks) != 1:
-            raise RuntimeError(
-                f"Frozen unit produced {len(chunks)} outputs; expected exactly one."
-            )
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        with profiling.span("tts.inference"):
+            chunks = list(self._model.inference_zero_shot(
+                normalized_text, self._prompt_text, str(self.prompt_wav),
+                stream=self.settings["stream"], text_frontend=False,
+            ))
+            if len(chunks) != 1:
+                raise RuntimeError(
+                    f"Frozen unit produced {len(chunks)} outputs; expected exactly one."
+                )
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
         inference_seconds = time.perf_counter() - started
-        write_pcm16_wav(
-            self._torchaudio, output_path, chunks[0]["tts_speech"],
-            self._model.sample_rate,
-        )
+        with profiling.span("tts.wav_write"):
+            write_pcm16_wav(
+                self._torchaudio, output_path, chunks[0]["tts_speech"],
+                self._model.sample_rate,
+            )
         audio = wav_info(output_path, self._model.sample_rate)
+        profiling.annotate(audio_seconds=audio["duration_seconds"], audio_frames=audio["frames"])
         return {
             "cosyvoice_chunks": 1,
             "inference_seconds": inference_seconds,

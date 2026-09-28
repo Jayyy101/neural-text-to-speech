@@ -4,7 +4,7 @@
 
 Build a high-quality local Mandarin audiobook system for long Chinese web novels, keeping one narrator consistent across chapters. Priorities are naturalness, faithful pronunciation, controllable pacing, and reliable long-text generation. Azure `zh-CN-XiaoxiaoNeural` is the listening-quality reference, not an exact voice-reproduction target.
 
-Current development branch: **`v2-development`**. The validated CosyVoice3 RL production backend and the native Windows user-facing audiobook UI milestone are accepted. The production-backend checkpoint is **`93d4515` — Promote validated CosyVoice3 RL audiobook backend**. Repository cleanup is the current separate milestone; the accepted generator and UI remain frozen.
+Current development branch: **`v2-development`**. The validated CosyVoice3 RL production backend and the native Windows user-facing audiobook UI milestone are accepted. The production-backend checkpoint is **`93d4515` — Promote validated CosyVoice3 RL audiobook backend**. Performance profiling is complete; the accepted generator and UI remain frozen.
 
 ## Current validated audiobook backend
 
@@ -19,13 +19,20 @@ Current development branch: **`v2-development`**. The validated CosyVoice3 RL pr
 - Architecture: **native Windows Tkinter UI → `wsl.exe` → frozen production `python -B -m src.audiobook run` CLI** in WSL `cosyvoice-b`. The launcher translates Windows paths, starts one job at a time, and logs worker output. The application layer interprets schema-5 progress and validates final assembly without changing production workflow behavior.
 - The normal screen accepts the desired Unicode WAV filename and exact pasted chapter text, then shows generation status, unit progress, and elapsed time. After validating canonical `final/chapter.wav`, it makes a non-overwriting copy with the requested name in the same final folder and enables **Open Folder**. The E1 inspector remains available via an explicit run-directory argument, but is hidden from the normal screen.
 - **User-reported manual acceptance:** the native UI launched the frozen WSL backend; a short smoke run and a full Chapter 4 run completed. The full Chapter 4 was comfortable to listen to throughout. A one-off extra-speech artifact in the short smoke run did not recur in that full Chapter 4 run; this does not establish that it can never recur. Chapter 1, the previous known-good quality reference, was regenerated through the current production pipeline and accepted again. Unicode filename export, progress, elapsed time, final WAV validation, and Open Folder were also confirmed.
-- This acceptance is manual end-to-end and listening evidence, separate from model-free tests. Neither the UI nor this milestone modifies the frozen backend. Repository cleanup is under way as its own milestone; retain unrelated evaluation artifacts and baseline evidence until separately reviewed.
+- This acceptance is manual end-to-end and listening evidence, separate from model-free tests. Neither the UI nor this milestone modifies the frozen backend. Retain unrelated evaluation artifacts and baseline evidence until separately reviewed.
+
+## Completed performance-profiling milestone
+
+- Optional, disabled-by-default profiling measures the Windows UI, WSL worker, planning, model loading, per-unit inference, QC, persistence, and assembly without changing the frozen generation policy. Profiling traces and GPU logs are generated under Git-ignored `outputs/`; `evaluation/summarize_performance.py` reports inclusive phase totals and critical-path accounting separately.
+- **Real profiled Chapter 4, accepted by listening:** Generate → Complete took approximately **369.57 s** for a finished audiobook of approximately **597 s**. CosyVoice synthesis took approximately **318.22 s** and content QC approximately **12.34 s**. All **38/38 units passed on their first attempt**, with **0 retries** and **0 QC rejections**. Synthesis is the dominant runtime cost.
+- An external `nvidia-smi` measurement during a separate representative Chapter 4 generation found active but bursty GPU utilization during inference: approximately **56.2% mean**, **54% median**, and **99% peak**; VRAM usage was approximately **10.7–14.3 GB**. There were no sustained between-unit idle gaps. Windows GPU utilization had a nonzero idle baseline, and process-level WSL attribution was unavailable, so this measurement is inconclusive for a specific optimization and revealed no obvious quality-neutral speed win.
+- **Project decision:** Current speed is acceptable. Defer further performance optimization indefinitely unless future real use makes it necessary. Do not pursue deeper inference optimization, parallel synthesis, precision changes, batching, or other speed work before project completion. Quality, reliability, determinism, and the accepted listening experience take priority; profiling remains an optional diagnostic capability.
 
 ### Future user-facing audio format
 
 Keep WAV/PCM inside the validated backend for synthesis, exact assembly, validation, and resumability. A future product output should support desirably named `.mp3` audiobook files, consistent with the prior Luvvoice workflow: **validated final WAV → encode/export MP3 → expose MP3 as the normal user-facing audiobook file**. MP3 conversion is not implemented in this milestone; the canonical backend WAV remains unchanged.
 
-## Repository cleanup (current milestone)
+## Repository cleanup
 
 Batch 1 removed 88 verified-empty root temporary directories and committed only the `.gitignore` additions for `.DS_Store` and `Thumbs.db` (`d1f2161`). Further cleanup remains under review; preserve all untracked evaluation scripts, tests, and chapter inputs until separately classified. The accepted backend and UI remain frozen.
 
@@ -140,7 +147,7 @@ Step 3 added a required content-QC gate for **new** schema-5 runs: a persistent 
 
 Step 4 added a persisted `bounded_content_qc_retries_v1` policy to new QC-enabled runs: at most three physical synthesis attempts per unit. Only a validated content rejection advances the logical take and its deterministic seed. An interrupted synthesis attempt reuses its logical take seed within the physical-attempt budget. QC infrastructure errors retry recognition on the same WAV; three valid rejections persist exhaustion, leave the unit unresolved, and block assembly. Rejected WAVs and sidecars remain append-only evidence. Existing Step 3 QC runs without the retry policy and Step 2 schema-5 runs without QC retain their recorded behavior; historical schemas 2–4 remain unchanged. Model-free tests cover these paths; the Chapter 1 full-chapter acceptance run recorded a confirmed omission in unit 66 and a successful second deterministic attempt.
 
-The accepted Windows UI now provides the simple paste → Generate → finished audiobook path over the validated schema-5 RL backend. The historical E1 inspector remains available for maintenance. Recovery controls and scene repair are outside the accepted main UI workflow. Repository cleanup is the current separate milestone.
+The accepted Windows UI now provides the simple paste → Generate → finished audiobook path over the validated schema-5 RL backend. The historical E1 inspector remains available for maintenance. Recovery controls and scene repair are outside the accepted main UI workflow. Performance investigation is complete; the frozen backend and UI remain the accepted production path.
 
 Automatic alignment, automatic pause placement, perceptual artifact detection, random retry loops, crossfades, mastering, MP3 export, EPUB/PDF/DOCX ingestion, deployment, and cloud infrastructure remain separate future work.
 

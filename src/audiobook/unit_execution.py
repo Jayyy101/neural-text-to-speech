@@ -20,6 +20,7 @@ from .postprocessing import read_wav_payload
 from .unit_planning import (
     UNIT_PLAN_SCHEMA_VERSION, validate_synthesis_unit_plan,
 )
+from . import profiling
 
 
 UNIT_SEED_POLICY = "sha256_root_plan_unit_take_v1"
@@ -212,6 +213,12 @@ def _refresh_retry_state(unit):
 
 
 def _select(manifest, unit, attempt, clock, reason):
+    with profiling.span("unit.selection", unit_id=unit["id"],
+                        attempt_id=attempt["id"], reason=reason):
+        return _select_impl(manifest, unit, attempt, clock, reason)
+
+
+def _select_impl(manifest, unit, attempt, clock, reason):
     state = unit["generation"]
     previous = state["selected_attempt_id"]
     state["selected_attempt_id"] = attempt["id"]
@@ -299,6 +306,16 @@ def _read_qc_evidence(run_directory, manifest, unit, attempt):
 
 def _run_qc(run_directory, manifest_path, manifest, unit, attempt,
             worker, rate, clock):
+    with profiling.span("unit.qc", unit_id=unit["id"],
+                        attempt_id=attempt["id"]) as timing:
+        decision = _run_qc_impl(run_directory, manifest_path, manifest, unit,
+                                attempt, worker, rate, clock)
+        timing.add(decision=decision)
+        return decision
+
+
+def _run_qc_impl(run_directory, manifest_path, manifest, unit, attempt,
+                 worker, rate, clock):
     _verify_unit_artifact(run_directory, attempt, rate)
     recovered = _read_qc_evidence(run_directory, manifest, unit, attempt)
     if recovered is not None:
@@ -335,7 +352,8 @@ def _run_qc(run_directory, manifest_path, manifest, unit, attempt,
         if (worker.model.get("model_id") != MODEL_ID
                 or worker.model.get("resolved_revision") != MODEL_REVISION):
             raise GenerationError("ASR worker model revision differs.")
-        comparison = compare_recognition(unit["normalized_text"], recognition)
+        with profiling.span("asr.content_comparison"):
+            comparison = compare_recognition(unit["normalized_text"], recognition)
         decision = comparison["decision"]
         evidence = {
             "schema_version": 1,
@@ -356,11 +374,12 @@ def _run_qc(run_directory, manifest_path, manifest, unit, attempt,
         temporary = evidence_path.with_suffix(".json.tmp")
         if evidence_path.exists() or temporary.exists():
             raise GenerationError("Untracked unit QC evidence already exists.")
-        temporary.write_text(
-            json.dumps(evidence, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(evidence_path)
+        with profiling.span("unit.qc_evidence_write"):
+            temporary.write_text(
+                json.dumps(evidence, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(evidence_path)
         qc.update({
             "status": decision, "decision": decision,
             "evidence_path": _qc_path(attempt),
@@ -379,6 +398,11 @@ def _run_qc(run_directory, manifest_path, manifest, unit, attempt,
 
 
 def _recover_or_target(run_directory, manifest, unit, rate, clock):
+    with profiling.span("unit.recovery_check", unit_id=unit["id"]):
+        return _recover_or_target_impl(run_directory, manifest, unit, rate, clock)
+
+
+def _recover_or_target_impl(run_directory, manifest, unit, rate, clock):
     state = unit["generation"]
     attempts = state["attempts"]
     qc_enabled = "content_qc" in manifest["generation"]
@@ -452,6 +476,17 @@ def _recover_or_target(run_directory, manifest, unit, rate, clock):
 
 def _run_attempt(run_directory, manifest_path, manifest, scene, unit,
                  backend, rate, clock):
+    with profiling.span("unit.attempt", unit_id=unit["id"]) as timing:
+        success = _run_attempt_impl(run_directory, manifest_path, manifest, scene,
+                                    unit, backend, rate, clock)
+        timing.add(success=success)
+        if not success:
+            timing.finish("failed")
+        return success
+
+
+def _run_attempt_impl(run_directory, manifest_path, manifest, scene, unit,
+                      backend, rate, clock):
     state = unit["generation"]
     attempts = state["attempts"]
     next_number = (
@@ -459,6 +494,7 @@ def _run_attempt(run_directory, manifest_path, manifest, scene, unit,
         if attempts else 1
     )
     attempt_id = f"attempt_{next_number:03d}"
+    profiling.annotate(attempt_id=attempt_id)
     output_rel = _attempt_path(scene["id"], unit["id"], attempt_id)
     output = run_directory / output_rel
     if output.parent.exists():
@@ -496,8 +532,11 @@ def _run_attempt(run_directory, manifest_path, manifest, scene, unit,
     save_manifest(manifest_path, manifest)
     try:
         output.parent.mkdir(parents=True)
-        result = backend.generate_unit(synthesis_text, output, seed)
+        with profiling.span("unit.synthesis"):
+            result = backend.generate_unit(synthesis_text, output, seed)
         audio = wav_info(output, rate)
+        profiling.annotate(audio_seconds=audio["duration_seconds"],
+                           audio_frames=audio["frames"])
         attempt.update({
             "status": "generated", "finished_at_utc": clock(),
             "audio": audio, "wav_sha256": file_sha256(output),
@@ -602,33 +641,38 @@ def generate_units(run_directory, backend, root_seed=None, clock=utc_now,
     worker = None
     try:
         for action, scene, unit in actions:
-            while action != "none":
-                if action == "synthesize":
-                    if not initialize_backend():
-                        return manifest
-                    success = _run_attempt(
-                        run_directory, manifest_path, manifest, scene, unit,
-                        backend, rate, clock,
-                    )
-                    if not success or "content_qc" not in generation:
+            with profiling.span("unit.cycle", unit_id=unit["id"], initial_action=action) as timing:
+                while action != "none":
+                    if action == "synthesize":
+                        if not initialize_backend():
+                            return manifest
+                        success = _run_attempt(
+                            run_directory, manifest_path, manifest, scene, unit,
+                            backend, rate, clock,
+                        )
+                        if not success or "content_qc" not in generation:
+                            break
+                        attempt = unit["generation"]["attempts"][-1]
+                    else:
+                        attempt = next(
+                            item for item in reversed(unit["generation"]["attempts"])
+                            if item["status"] == "generated"
+                        )
+                    if (worker is None and attempt["audio"]["duration_seconds"]
+                            <= MAX_WHOLE_WAV_SECONDS):
+                        worker = (worker_factory or ASRWorkerClient)(
+                            asr_python, run_directory / "content_qc_worker.log"
+                        )
+                    decision = _run_qc(run_directory, manifest_path, manifest, unit, attempt,
+                                       worker, rate, clock)
+                    if decision == "rejected" and generation.get("content_retry") is not None:
+                        with profiling.span("unit.retry_decision", decision=decision,
+                                            attempt_id=attempt["id"]):
+                            action = _recover_or_target(run_directory, manifest, unit, rate, clock)
+                    else:
                         break
-                    attempt = unit["generation"]["attempts"][-1]
-                else:
-                    attempt = next(
-                        item for item in reversed(unit["generation"]["attempts"])
-                        if item["status"] == "generated"
-                    )
-                if (worker is None and attempt["audio"]["duration_seconds"]
-                        <= MAX_WHOLE_WAV_SECONDS):
-                    worker = (worker_factory or ASRWorkerClient)(
-                        asr_python, run_directory / "content_qc_worker.log"
-                    )
-                decision = _run_qc(run_directory, manifest_path, manifest, unit, attempt,
-                                   worker, rate, clock)
-                if decision == "rejected" and generation.get("content_retry") is not None:
-                    action = _recover_or_target(run_directory, manifest, unit, rate, clock)
-                else:
-                    break
+                timing.add(attempts_used=len(unit["generation"]["attempts"]),
+                           selected_attempt_id=unit["generation"]["selected_attempt_id"])
     finally:
         if worker is not None:
             worker.close()
@@ -640,6 +684,11 @@ def generate_units(run_directory, backend, root_seed=None, clock=utc_now,
 
 def assemble_units(run_directory, clock=utc_now):
     """Publish exact selected unit PCM in scene and unit order."""
+    with profiling.span("assembly.total"):
+        return _assemble_units(run_directory, clock=clock)
+
+
+def _assemble_units(run_directory, clock=utc_now):
     run_directory, manifest_path, manifest = _load(run_directory)
     generation = manifest.get("generation")
     if not isinstance(generation, dict) or manifest["status"] != "generated":
@@ -656,14 +705,17 @@ def assemble_units(run_directory, clock=utc_now):
         if selected_id is None:
             raise GenerationError(f"{unit['id']} has no selected attempt.")
         attempt = next(item for item in state["attempts"] if item["id"] == selected_id)
-        _verify_unit_artifact(run_directory, attempt, rate)
-        if "content_qc" in generation:
-            if attempt["content_qc"]["status"] != "passed":
-                raise GenerationError(f"{unit['id']} has no passed content QC.")
-            _read_qc_evidence(run_directory, manifest, unit, attempt)
+        with profiling.span("assembly.selected_validation", unit_id=unit["id"]):
+            _verify_unit_artifact(run_directory, attempt, rate)
+            if "content_qc" in generation:
+                if attempt["content_qc"]["status"] != "passed":
+                    raise GenerationError(f"{unit['id']} has no passed content QC.")
+                _read_qc_evidence(run_directory, manifest, unit, attempt)
         path = (run_directory / attempt["output_path"]).resolve()
         path.relative_to(run_directory)
-        clip_params, frames, payload = read_wav_payload(path)
+        with profiling.span("assembly.read_pcm", unit_id=unit["id"]) as timing:
+            clip_params, frames, payload = read_wav_payload(path)
+            timing.add(bytes_read=len(payload))
         if params is None:
             params = clip_params
         elif clip_params != params:
@@ -688,16 +740,18 @@ def assemble_units(run_directory, clock=utc_now):
     if partial.exists():
         raise GenerationError(f"Incomplete assembly output already exists: {partial}")
     try:
-        with wave.open(str(partial), "wb") as wav:
-            wav.setparams((params["channels"], params["sample_width_bytes"],
-                           params["sample_rate_hz"], 0, "NONE", "not compressed"))
-            for clip in clips:
-                wav.writeframesraw(clip["payload"])
+        with profiling.span("assembly.write_pcm", bytes_written=cursor * params["sample_width_bytes"]):
+            with wave.open(str(partial), "wb") as wav:
+                wav.setparams((params["channels"], params["sample_width_bytes"],
+                               params["sample_rate_hz"], 0, "NONE", "not compressed"))
+                for clip in clips:
+                    wav.writeframesraw(clip["payload"])
         audio = wav_info(partial, rate)
         if audio["frames"] != cursor:
             raise GenerationError("Assembled unit WAV frame count is incorrect.")
         digest = file_sha256(partial)
-        partial.replace(output)
+        with profiling.span("assembly.publish"):
+            partial.replace(output)
     except Exception:
         partial.unlink(missing_ok=True)
         raise

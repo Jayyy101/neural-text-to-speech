@@ -6,6 +6,7 @@ import subprocess
 import sys
 
 from .audiobook.planning import validate_id
+from .audiobook import profiling
 
 
 DEFAULT_DISTRIBUTION = "Ubuntu-22.04"
@@ -20,12 +21,13 @@ def windows_to_wsl_path(path, *, distribution=DEFAULT_DISTRIBUTION,
     if (not windows.is_absolute() or not windows.drive.endswith(":")
             or windows.root != "\\"):
         raise ValueError("Expected an absolute Windows drive path.")
-    result = run(
-        ["wsl.exe", "--distribution", distribution, "--user", user,
-         "--exec", "wslpath", "-u", str(windows)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        check=False,
-    )
+    with profiling.span("launcher.wslpath", path_role=windows.name):
+        result = run(
+            ["wsl.exe", "--distribution", distribution, "--user", user,
+             "--exec", "wslpath", "-u", str(windows)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=False,
+        )
     if result.returncode:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
         raise RuntimeError(f"WSL path conversion failed: {detail or result.returncode}")
@@ -61,6 +63,10 @@ class AudiobookLauncher:
 
     def command(self, source_path, chapter_id, run_id):
         """Build the exact production command without launching or writing files."""
+        with profiling.span("launcher.command_preparation"):
+            return self._command(source_path, chapter_id, run_id)
+
+    def _command(self, source_path, chapter_id, run_id):
         validate_id("chapter_id", chapter_id)
         validate_id("run_id", run_id)
         repo = windows_to_wsl_path(
@@ -75,9 +81,14 @@ class AudiobookLauncher:
             self.output_root, distribution=self.distribution,
             user=self.user, run=self._run,
         )
+        executable = [self.python]
+        if profiling.enabled():
+            profile_dir = PurePosixPath(source).parent / "profile"
+            executable = ["/usr/bin/env", "TTS_PROFILE=1",
+                          f"TTS_PROFILE_DIR={profile_dir}", self.python]
         return [
             "wsl.exe", "--distribution", self.distribution,
-            "--user", self.user, "--cd", repo, "--exec", self.python,
+            "--user", self.user, "--cd", repo, "--exec", *executable,
             "-B", "-m", "src.audiobook", "run", source,
             "--chapter-id", chapter_id, "--run-id", run_id,
             "--output-root", output,
@@ -87,8 +98,10 @@ class AudiobookLauncher:
         """Return None while running, or the CLI exit code once finished."""
         if self._process is None:
             return None
-        code = self._process.poll()
+        with profiling.span("launcher.poll"):
+            code = self._process.poll()
         if code is not None and self._log is not None:
+            profiling.mark("launcher.worker_exit_observed", exit_code=code)
             self._log.close()
             self._log = None
         return code
@@ -109,17 +122,22 @@ class AudiobookLauncher:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         # WSL writes UTF-8 bytes; leave them unchanged for later UTF-8 reads.
         log = log_path.open("xb")
+        process = None
         try:
-            process = self._popen(
-                command, stdin=subprocess.DEVNULL, stdout=log,
-                stderr=subprocess.STDOUT, shell=False,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
+            with profiling.span("launcher.process_launch"):
+                process = self._popen(
+                    command, stdin=subprocess.DEVNULL, stdout=log,
+                    stderr=subprocess.STDOUT, shell=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                # Own the child before tracing can run its exit hook.
+                self._process = process
+                self._log = log
+                self.run_directory = run_directory
+                self.log_path = log_path
         except Exception:
-            log.close()
-            raise
-        self._process = process
-        self._log = log
-        self.run_directory = run_directory
-        self.log_path = log_path
+            if process is None:
+                log.close()
+                raise
+            # Popen succeeded; only the profiling exit hook remains here.
         return run_directory

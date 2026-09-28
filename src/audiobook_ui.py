@@ -17,6 +17,7 @@ import unicodedata
 
 from src.audiobook_application import inspect_run, open_audio_file
 from src.audiobook_launcher import AudiobookLauncher
+from src.audiobook import profiling
 
 
 INVALID_WINDOWS_FILENAME_CHARACTERS = set('<>:"/\\|?*')
@@ -276,6 +277,12 @@ class AudiobookInspector:
         self.generate_button.configure(state=tk.NORMAL)
         self.filename_entry.configure(state=tk.NORMAL)
         self._set_generation_status(status, detail)
+        profile_job = getattr(self, "profile_job", None)
+        if profile_job is not None:
+            profile_job.finish("ok" if status == "Complete" else "error",
+                               status=status)
+            self.profile_job = None
+            profiling.flush()
 
     @staticmethod
     def _record_ui_failure(log_path, error):
@@ -303,6 +310,9 @@ class AudiobookInspector:
         request_dir = self.launcher.repository_root / "outputs" / "ui_requests" / job_id
         source_path = request_dir / "source.txt"
         log_path = request_dir / "worker.log"
+        profiling.activate(request_dir / "profile" if os.environ.get("TTS_PROFILE") == "1"
+                           else None)
+        self.profile_job = profiling.begin("ui.generate_to_complete", job_id=job_id)
         self.requested_filename = filename
         self.request_job_id = job_id
         self.started_at = time.monotonic()
@@ -317,8 +327,10 @@ class AudiobookInspector:
         self.generation_progress.start()
         self._set_generation_status("Preparing...")
         try:
-            request_dir.mkdir(parents=True)
-            source_path.write_bytes(chapter.encode("utf-8"))
+            source_bytes = chapter.encode("utf-8")
+            with profiling.span("ui.source_write", source_bytes=len(source_bytes)):
+                request_dir.mkdir(parents=True)
+                source_path.write_bytes(source_bytes)
         except (OSError, RuntimeError, ValueError) as error:
             logged = self._record_ui_failure(log_path, error)
             detail = (f"Could not start. Worker log: {log_path}" if logged else
@@ -337,8 +349,11 @@ class AudiobookInspector:
 
         def launch():
             try:
-                self.launcher.start(source_path, "chapter_" + job_id,
-                                    "run_" + job_id, log_path)
+                profile_job = getattr(self, "profile_job", None)
+                with profiling.span("ui.launch", parent_id=(
+                        profile_job.span_id if profile_job is not None else None)):
+                    self.launcher.start(source_path, "chapter_" + job_id,
+                                        "run_" + job_id, log_path)
             except (OSError, RuntimeError, ValueError) as error:
                 destination.put(error)
             else:
@@ -354,9 +369,17 @@ class AudiobookInspector:
         def inspect():
             result = None
             try:
-                result = inspect_run(run_directory)
-                exported = (export_wav(result.assembly.audio_path, filename)
-                            if kind == "final" and result.assembly.playable else None)
+                name = "ui.final_validation" if kind == "final" else "ui.progress_inspection"
+                profile_job = getattr(self, "profile_job", None)
+                parent_id = profile_job.span_id if profile_job is not None else None
+                with profiling.span(name, parent_id=parent_id):
+                    result = inspect_run(run_directory)
+                if kind == "final" and result.assembly.playable:
+                    with profiling.span("ui.named_file_copy", parent_id=parent_id):
+                        exported = export_wav(result.assembly.audio_path, filename)
+                    profiling.mark("ui.export_ready", job_id=self.request_job_id)
+                else:
+                    exported = None
             except Exception as error:
                 destination.put((kind, result, None, error))
             else:
