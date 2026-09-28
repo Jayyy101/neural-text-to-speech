@@ -38,13 +38,28 @@ class LauncherTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unexpected"):
             windows_to_wsl_path(r"C:\input.txt", run=invalid)
 
+    def test_wsl_path_conversion_hides_console_and_keeps_error_output(self):
+        failed = Mock(return_value=subprocess.CompletedProcess([], 1, b"", b"mapping failed"))
+        with patch.object(subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True):
+            with self.assertRaisesRegex(RuntimeError, "mapping failed"):
+                windows_to_wsl_path(r"C:\input.txt", run=failed)
+        call = failed.call_args
+        self.assertIsInstance(call.args[0], list)
+        self.assertEqual(call.kwargs["creationflags"], 0x08000000)
+        self.assertEqual(call.kwargs["stdout"], subprocess.PIPE)
+        self.assertEqual(call.kwargs["stderr"], subprocess.PIPE)
+
     def test_command_and_single_active_job(self):
         repo = r"C:\Users\Jay Ma\OneDrive\Documents\TTS_Project"
         source = r"C:\Users\Jay Ma\chapters\神通者 03.txt"
         launcher = AudiobookLauncher(
-            repository_root=repo, output_root=repo + r"\outputs\audiobooks",
+            repository_root=repo,
             run=mapped_path, popen=Mock(), platform="win32",
         )
+        self.assertEqual(launcher.output_root,
+                         Path(r"C:\Users\Jay Ma\TTS_Audiobooks") / "audiobooks")
+        self.assertEqual(launcher.request_root,
+                         Path(r"C:\Users\Jay Ma\TTS_Audiobooks") / "ui_requests")
         expected = launcher.command(source, "chapter_03", "run_001")
         self.assertEqual(expected, [
             "wsl.exe", "--distribution", "Ubuntu-22.04", "--user", "jay",
@@ -53,7 +68,7 @@ class LauncherTests(unittest.TestCase):
             "-B", "-m", "src.audiobook", "run",
             "/mnt/c/Users/Jay Ma/chapters/神通者 03.txt",
             "--chapter-id", "chapter_03", "--run-id", "run_001",
-            "--output-root", "/mnt/c/Users/Jay Ma/OneDrive/Documents/TTS_Project/outputs/audiobooks",
+            "--output-root", "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks",
         ])
         with self.assertRaises(ValueError):
             launcher.command(source, "../bad", "run_001")
@@ -63,18 +78,20 @@ class LauncherTests(unittest.TestCase):
         launcher._popen.return_value = process
         with tempfile.TemporaryDirectory() as folder:
             log_path = Path(folder) / "job.log"
-            with patch("src.audiobook_launcher.Path.is_file", return_value=True):
-                run_dir = launcher.start(source, "chapter_03", "run_001", log_path)
-                self.assertEqual(run_dir, launcher.run_directory)
-                self.assertEqual(launcher.log_path, log_path)
-                self.assertTrue(log_path.is_file())
-                self.assertIsNone(launcher.poll())
-                with self.assertRaisesRegex(RuntimeError, "already running"):
-                    launcher.start(source, "chapter_04", "run_002", Path(folder) / "other.log")
+            with patch.object(subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True):
+                with patch("src.audiobook_launcher.Path.is_file", return_value=True):
+                    run_dir = launcher.start(source, "chapter_03", "run_001", log_path)
+                    self.assertEqual(run_dir, launcher.run_directory)
+                    self.assertEqual(launcher.log_path, log_path)
+                    self.assertTrue(log_path.is_file())
+                    self.assertIsNone(launcher.poll())
+                    with self.assertRaisesRegex(RuntimeError, "already running"):
+                        launcher.start(source, "chapter_04", "run_002", Path(folder) / "other.log")
             self.assertEqual(launcher.poll(), 0)
             call = launcher._popen.call_args
             self.assertEqual(call.args[0], expected)
             self.assertFalse(call.kwargs["shell"])
+            self.assertEqual(call.kwargs["creationflags"], 0x08000000)
             self.assertEqual(call.kwargs["stderr"], subprocess.STDOUT)
             self.assertTrue(call.kwargs["stdout"].closed)
 

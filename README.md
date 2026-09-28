@@ -4,15 +4,15 @@ The accepted product is a local Mandarin audiobook app: a native Windows UI back
 
 ## Windows audiobook app
 
-From PowerShell in the repository root, launch the native Windows Tkinter UI:
+Double-click `launch_audiobook.cmd` in the repository root to open the native Windows Tkinter UI without a persistent console window. The launcher uses `C:\miniconda3\pythonw.exe` on this machine. The equivalent PowerShell command from the repository root is:
 
 ```powershell
 python -B -m src.audiobook_ui
 ```
 
-Enter a WAV filename (Unicode names such as `神通者04.wav` are supported), paste one chapter, and click **Generate Audiobook**. The UI shows unit progress and elapsed time, then displays the validated finished WAV path. **Open Folder** opens the final output directory in Windows Explorer. An omitted `.wav` extension is added automatically; an existing exported filename is never silently overwritten.
+Normal workflow: double-click `launch_audiobook.cmd` → choose an MP3 filename → paste a chapter → click **Generate Audiobook** → watch progress → use the finished MP3 path and **Open Folder**. Unicode names such as `神通者04.mp3` work; an omitted `.mp3` extension is added automatically, and an existing export is never overwritten.
 
-Generation runs through `wsl.exe` in the isolated WSL `cosyvoice-b` environment, using the frozen `python -B -m src.audiobook run` production CLI. The source, manifest, and audio remain on the Windows filesystem. Each UI request has a UTF-8 source snapshot and worker log under `outputs/ui_requests/<job-id>/`. The canonical resumable output is `outputs/audiobooks/<chapter-id>/<run-id>/final/chapter.wav`; after validation, the requested filename is exported as a separate copy in that same `final` folder. The UI does not edit the chapter text or implement resume, cancellation, or manual repair controls.
+Generation runs through `wsl.exe` in the isolated WSL `cosyvoice-b` environment, using the frozen `python -B -m src.audiobook run` production CLI. The repository remains in OneDrive, but live generated data is stored outside it at `C:\Users\Jay Ma\TTS_Audiobooks\`: `ui_requests/<job-id>/` holds the exact UTF-8 source snapshot, worker log, and optional profile, while `audiobooks/<chapter-id>/<run-id>/final/chapter.wav` is the canonical resumable output. After validation, WSL ffmpeg encodes a verified mono 96 kb/s MP3 beside that WAV. This keeps generated audio clear of OneDrive sync and indexing overhead. If MP3 export fails, the UI reports the failure and keeps the WAV available through **Open Folder**. The UI does not edit the chapter text or implement resume, cancellation, or manual repair controls.
 
 The read-only existing-run inspector is retained for maintenance: pass a run directory to `python -B -m src.audiobook_ui <run-directory>`. It is not part of the normal generation screen.
 
@@ -58,7 +58,7 @@ The paths above are defaults and can be overridden with `--cosyvoice-root`, `--m
 
 ### Commands
 
-Run commands from the repository root. The default output root is `outputs/audiobooks`.
+Run commands from the repository root in WSL. The default output root is `/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks`; the Windows UI maps its local output path with `wslpath`.
 
 ```bash
 # Plan only. The target run directory must not already exist.
@@ -67,7 +67,7 @@ python -B -m src.audiobook plan chapter.txt \
 
 # Historical scene workflow for an existing D1 plan.
 python -B -m src.audiobook generate \
-  outputs/audiobooks/chapter_0001/run_001
+  "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks/chapter_0001/run_001"
 
 # Default: plan, certify units, generate with RL and bounded QC, and assemble.
 python -B -m src.audiobook run chapter.txt \
@@ -75,28 +75,28 @@ python -B -m src.audiobook run chapter.txt \
 
 # Resume any incomplete run under its recorded policy.
 python -B -m src.audiobook resume \
-  outputs/audiobooks/chapter_0001/run_001
+  "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks/chapter_0001/run_001"
 
 # Historical scene-only targeted regeneration.
 python -B -m src.audiobook regenerate \
-  outputs/audiobooks/chapter_0001/run_001 --scene-id scene_0002
+  "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks/chapter_0001/run_001" --scene-id scene_0002
 
 # Request a reproducible alternate take. Seed range: 0 through 2**32 - 1.
 python -B -m src.audiobook regenerate \
-  outputs/audiobooks/chapter_0001/run_001 \
+  "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks/chapter_0001/run_001" \
   --scene-id scene_0002 --seed 1
 
 # Apply a manually authored plan bound to the selected attempt ID and WAV hash.
 python -B -m src.audiobook repair \
-  outputs/audiobooks/chapter_0001/run_001 \
+  "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks/chapter_0001/run_001" \
   --scene-id scene_0002 --plan pause-plan.json
 
 # Rebuild final/chapter.wav from current selected artifacts.
 python -B -m src.audiobook assemble \
-  outputs/audiobooks/chapter_0001/run_001
+  "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks/chapter_0001/run_001"
 ```
 
-Default `run` retries only validated contiguous Han omissions within the recorded three-attempt cap. If a unit remains unresolved, the run stays resumable and assembly is blocked. Historical scene generation is available with `run --legacy-scenes`; `regenerate` and `repair` remain scene-only operations.
+Default `run` retries validated contiguous Han omissions and verified WAVs over the 30-second QC limit within the recorded three-attempt cap. If a unit remains unresolved, assembly is blocked. Historical scene generation is available with `run --legacy-scenes`; `regenerate` and `repair` remain scene-only operations.
 
 ### Unit-planned chapter path (schema 5)
 
@@ -106,13 +106,13 @@ This is the default `run` workflow and is also available as separate commands. I
 python -B -m src.audiobook plan chapter.txt \
   --chapter-id chapter_units --run-id run_001
 python -B -m src.audiobook prepare-units \
-  outputs/audiobooks/chapter_units/run_001
+  "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks/chapter_units/run_001"
 python -B -m src.audiobook generate \
-  outputs/audiobooks/chapter_units/run_001 --root-seed 12345
+  "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks/chapter_units/run_001" --root-seed 12345
 python -B -m src.audiobook resume \
-  outputs/audiobooks/chapter_units/run_001
+  "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks/chapter_units/run_001"
 python -B -m src.audiobook assemble \
-  outputs/audiobooks/chapter_units/run_001
+  "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks/chapter_units/run_001"
 ```
 
 `--root-seed` is optional on first `generate`; an omitted value is generated and persisted before synthesis. Schema 5 derives an explicit 32-bit seed from the root seed, immutable unit-plan hash, unit ID, take index, and versioned `sha256_root_plan_unit_take_v1` policy. Interrupted physical attempts of the same logical take reuse that seed, and skipping selected units cannot shift later seeds. This changes RNG semantics from historical scene generation and clean12's advancing global random stream.
@@ -121,14 +121,14 @@ One warm model synthesizes each frozen normalized unit with `text_frontend=False
 
 New schema-5 runs require the fixed Mandarin content gate before a generated attempt can be selected. A persistent audio-only ASR worker runs in the isolated `tts-align` interpreter while CosyVoice stays in `cosyvoice-b`. The worker receives only the WAV path/hash and returns independent greedy CTC recognition; the parent then compares frozen intended Han text with the recognized sequence. A contiguous expected Han deletion of **4 or more** rejects the attempt. Atomic `content_qc.json` sidecars bind passed/rejected evidence to each attempt. Step 3 real acceptance passed on the two-unit fixture: both units passed, one worker served both, exact PCM assembly was preserved, and resume made no new TTS or ASR requests.
 
-For **new** QC-enabled runs, the persisted `bounded_content_qc_retries_v1` policy permits at most three total physical synthesis attempts per unit. A validated content rejection advances the logical take index and derives a new seed from the existing root/plan/unit/take policy; synthesis interruption can create another physical attempt with the same logical take and seed while the physical-attempt budget remains. Passed QC selects and stops. QC infrastructure errors, pending/running QC, and interrupted QC retry recognition on the existing WAV; a corrupt artifact or evidence fails closed. Three valid content rejections persist an exhausted state, leave the unit unresolved, and block assembly. Substitutions, insertions, CER, and deletions of 1–3 expected Han characters do not trigger synthesis retries. Earlier QC-enabled Step 3 runs without a retry-policy record retain their recorded no-retry behavior. Existing Step 2 schema-5 runs without QC retain their historical selection behavior. The validated whole-WAV ASR path remains limited to 30 seconds per unit. The Chapter 1 full-chapter acceptance run recorded a confirmed omission in unit 66 and a successful second deterministic attempt.
+For **new** QC-enabled runs, the persisted `bounded_content_or_overlength_retries_v2` policy permits at most three total physical synthesis attempts per unit. A validated content rejection or a verified WAV over the 30-second whole-WAV QC limit advances the logical take index and derives a new seed from the existing root/plan/unit/take policy. Overlength attempts retain their WAV and versioned rejection evidence; ASR does not run on those attempts. Synthesis interruption can create another physical attempt with the same logical take and seed while the physical-attempt budget remains. Passed QC selects and stops. QC infrastructure errors, pending/running QC, and interrupted QC retry recognition on the existing WAV; a corrupt artifact or evidence fails closed. Three valid rejections persist an exhausted state, leave the unit unresolved, and block assembly. Substitutions, insertions, CER, and deletions of 1–3 expected Han characters do not trigger synthesis retries. Historical retry-policy v1 runs keep their recorded behavior unless an eligible failed run is explicitly migrated with `resume --enable-overlength-retry`; the original manifest is preserved in a non-overwriting snapshot. Earlier QC-enabled Step 3 runs without a retry-policy record retain their recorded no-retry behavior. Existing Step 2 schema-5 runs without QC retain their historical selection behavior. The validated whole-WAV ASR path remains limited to 30 seconds per unit. The Chapter 1 full-chapter acceptance run recorded a confirmed omission in unit 66 and a successful second deterministic attempt.
 
 ### Run artifacts and state (historical scene example)
 
 The layout below illustrates a scene-workflow run. Current schema-5 runs also store certified units, per-unit attempts, and content-QC sidecars under `units/`; their canonical final file is still `final/chapter.wav`.
 
 ```text
-outputs/audiobooks/<chapter_id>/<run_id>/
+C:\Users\Jay Ma\TTS_Audiobooks\audiobooks\<chapter_id>\<run_id>\
 |-- source.txt
 |-- manifest.json
 |-- scenes/
@@ -156,12 +156,12 @@ Historical scene assembly selects a valid current repair when present and otherw
 - The default path freezes native frontend units from coherent chapter text and assembles selected unit PCM exactly.
 - A structurally valid WAV can still contain a perceptual generation artifact. Listening remains part of acceptance; the exact assembly does not alter samples within selected units.
 - Explicit seeded scene regeneration is available only for historical scene runs, not the default schema-5 path.
-- Automatic punctuation alignment, forced alignment, pause inference, perceptual artifact detection, random retry loops, mastering, MP3 export, and document ingestion remain deferred.
+- Automatic punctuation alignment, forced alignment, pause inference, perceptual artifact detection, random retry loops, mastering, and document ingestion remain deferred.
 - The backend accepts UTF-8 chapter text; standalone `***` markers are optional intentional scene boundaries.
 
 ### Local interface boundary
 
-The native Windows Tkinter UI reads persisted run manifests through `src/audiobook_application.py` and starts the existing CLI through `src/audiobook_launcher.py`. The CLI retains all planning, synthesis, QC/retry, resume state, and assembly decisions. The UI validates the canonical final WAV before copying it to the user-facing filename. The historical E1 inspector remains available only when a run directory is explicitly supplied.
+The native Windows Tkinter UI reads persisted run manifests through `src/audiobook_application.py` and starts the existing CLI through `src/audiobook_launcher.py`. The CLI retains all planning, synthesis, QC/retry, resume state, and assembly decisions. The UI validates the canonical final WAV before encoding and publishing the user-facing MP3. The historical E1 inspector remains available only when a run directory is explicitly supplied.
 
 ### Tests
 
@@ -191,9 +191,9 @@ These files remain for reproducibility and are outside the accepted CosyVoice au
 | `archive/legacy_prototypes/xtts.py` | XTTS multilingual experiment. |
 | `archive/legacy_prototypes/generate_azure.py` | Azure Neural TTS quality benchmark; Xiaoxiao remains a listening reference. |
 
-The root `requirements.txt` describes the historical Melo GUI, not the WSL CosyVoice production environment. It is not a validated lockfile for recreating the captured `melo` environment. The Melo baseline, including measured results and known failures, is documented in [evaluation/README.md](evaluation/README.md); its environment capture is under `evaluation/baseline/`. Generated audio and run evidence under `outputs/` are local and Git-ignored.
+The root `requirements.txt` describes the historical Melo GUI, not the WSL CosyVoice production environment. It is not a validated lockfile for recreating the captured `melo` environment. The Melo baseline, including measured results and known failures, is documented in [evaluation/README.md](evaluation/README.md); its environment capture is under `evaluation/baseline/`. Historical evidence under `outputs/` and live runtime data under `C:\Users\Jay Ma\TTS_Audiobooks\` are local and outside Git.
 
-Future product work includes MP3 export from a validated final WAV. Repository cleanup is a separate ongoing milestone; preserve baseline evidence and unrelated evaluation work until reviewed.
+Repository cleanup is complete. Preserve baseline evidence and unrelated evaluation work.
 
 ---
 

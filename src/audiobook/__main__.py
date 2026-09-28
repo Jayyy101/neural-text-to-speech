@@ -24,7 +24,7 @@ from .pipeline import (
 from .postprocessing import assemble_chapter, repair_scene
 from .planning import PlanningError
 from .unit_planning import prepare_synthesis_unit_run
-from .unit_execution import assemble_units, generate_units
+from .unit_execution import assemble_units, enable_overlength_retry, generate_units
 from .content_qc import DEFAULT_ASR_PYTHON
 from .workflow import run_chapter, run_unit_chapter
 
@@ -32,7 +32,7 @@ _startup_import.finish()
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT_ROOT = REPOSITORY_ROOT / "outputs/audiobooks"
+DEFAULT_OUTPUT_ROOT = Path("/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks")
 DEFAULT_COSYVOICE_ROOT = Path.home() / "CosyVoice"
 DEFAULT_RL_VIEW = REPOSITORY_ROOT / "outputs/model_views/cosyvoice3_rl"
 VALIDATED_XIAOXIAO_WAV_SHA256 = "d00856f65e90b7449c1286af2c4ad61e656927d5d35ce818ee4e0d25a3e8544e"
@@ -143,6 +143,8 @@ def main(argv=None):
     add_backend_options(resume)
     resume.add_argument("--asr-python", default=DEFAULT_ASR_PYTHON,
                         help="Pinned persistent Mandarin ASR worker interpreter.")
+    resume.add_argument("--enable-overlength-retry", action="store_true",
+                        help="Explicitly migrate a failed v1 unit run to bounded overlength retries.")
     regenerate = commands.add_parser(
         "regenerate", help="Generate one new attempt for one scene."
     )
@@ -296,6 +298,10 @@ def main(argv=None):
         adapter = create_adapter(args, model_dir=model_dir)
         if args.command == "generate" and schema != 5 and args.root_seed is not None:
             raise GenerationError("--root-seed applies only to unit-planned runs.")
+        if args.command == "resume" and args.enable_overlength_retry:
+            if schema != 5:
+                raise GenerationError("Overlength retry applies only to unit-planned runs.")
+            enable_overlength_retry(args.run_directory)
         if schema == 5 and args.command in {"generate", "resume"}:
             manifest = generate_units(
                 args.run_directory, adapter,

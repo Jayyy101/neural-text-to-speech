@@ -1,5 +1,6 @@
 """Schema-5 synthesis-unit execution, recovery, and exact PCM assembly."""
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -31,6 +32,17 @@ CONTENT_RETRY_POLICY = {
     "max_total_attempts_per_unit": 3,
     "trigger": "validated_contiguous_expected_han_deletion_v1",
 }
+OVERLENGTH_RETRY_POLICY = {
+    "policy": "bounded_content_or_overlength_retries_v2",
+    "max_total_attempts_per_unit": 3,
+    "triggers": ["validated_contiguous_expected_han_deletion_v1",
+                 "verified_wav_exceeds_qc_duration_limit_v1"],
+}
+OVERLENGTH_EXECUTION_POLICY = "content_qc_bounded_overlength_retries_v2"
+DURATION_REJECTION_REASON = "wav_exceeds_qc_duration_limit"
+DURATION_EVIDENCE_TYPE = "wav_duration_limit_v1"
+
+
 def derive_unit_seed(root_seed, plan_hash, unit_id, take_index=1):
     """Derive an explicit 32-bit seed independent of execution order."""
     validate_seed(root_seed)
@@ -60,23 +72,41 @@ def _load(run_directory):
     validate_synthesis_unit_plan(run_directory, manifest)
     generation = manifest.get("generation")
     execution_policy = manifest.get("unit_execution_policy")
-    if execution_policy not in (None, QC_EXECUTION_POLICY, RETRY_EXECUTION_POLICY):
+    if execution_policy not in (None, QC_EXECUTION_POLICY, RETRY_EXECUTION_POLICY,
+                                OVERLENGTH_EXECUTION_POLICY):
         raise GenerationError("Unit execution policy is invalid.")
     if generation is not None:
         if not isinstance(generation, dict) or generation.get("seed_policy") != UNIT_SEED_POLICY:
             raise GenerationError("Unit generation seed policy is invalid.")
         root_seed = validate_seed(generation.get("root_seed"))
         qc_config = generation.get("content_qc")
-        if (execution_policy in {QC_EXECUTION_POLICY, RETRY_EXECUTION_POLICY}) != (
+        if (execution_policy in {QC_EXECUTION_POLICY, RETRY_EXECUTION_POLICY,
+                                 OVERLENGTH_EXECUTION_POLICY}) != (
                 qc_config is not None):
             raise GenerationError("Unit content-QC requirement and configuration differ.")
         if qc_config is not None and qc_config != policy_record(
                 qc_config.get("asr_python") if isinstance(qc_config, dict) else None):
             raise GenerationError("Recorded content-QC policy or model revision differs.")
         retry_policy = generation.get("content_retry")
-        if ((execution_policy == RETRY_EXECUTION_POLICY) != (retry_policy is not None)
-                or retry_policy is not None and retry_policy != CONTENT_RETRY_POLICY):
+        expected_retry = ({RETRY_EXECUTION_POLICY: CONTENT_RETRY_POLICY,
+                           OVERLENGTH_EXECUTION_POLICY: OVERLENGTH_RETRY_POLICY}
+                          .get(execution_policy))
+        if retry_policy != expected_retry:
             raise GenerationError("Recorded content-retry policy differs.")
+        if execution_policy == OVERLENGTH_EXECUTION_POLICY and generation.get(
+                "retry_policy_migration") is not None:
+            migration = generation["retry_policy_migration"]
+            if (not isinstance(migration, dict)
+                    or migration.get("old_policy") != CONTENT_RETRY_POLICY
+                    or migration.get("new_policy") != OVERLENGTH_RETRY_POLICY
+                    or migration.get("reason") != DURATION_REJECTION_REASON
+                    or not isinstance(migration.get("snapshot_sha256"), str)
+                    or not isinstance(migration.get("at_utc"), str)):
+                raise GenerationError("Recorded retry-policy migration differs.")
+            snapshot = run_directory / "manifest.before_overlength_retry_v2.json"
+            if (not snapshot.is_file() or file_sha256(snapshot)
+                    != migration["snapshot_sha256"]):
+                raise GenerationError("Overlength retry migration snapshot differs.")
         for scene, unit in _units(manifest):
             state = unit.get("generation")
             if not isinstance(state, dict) or not isinstance(state.get("attempts"), list):
@@ -192,11 +222,18 @@ def _refresh_retry_state(unit):
                 if all(item["status"] == "generated" and
                        item["content_qc"]["status"] == "rejected"
                        for item in attempts):
-                    status, reason = "exhausted", "all_allowed_attempts_rejected_for_content"
+                    duration = any(item["content_qc"].get("rejection_reason")
+                                   == DURATION_REJECTION_REASON for item in attempts)
+                    status = "exhausted"
+                    reason = ("all_allowed_attempts_rejected_for_qc" if duration else
+                              "all_allowed_attempts_rejected_for_content")
                 else:
                     status, reason = "attempt_limit_reached", "synthesis_attempt_limit"
             else:
-                status, reason = "retry_pending", "validated_content_rejection"
+                reason = ("verified_duration_rejection" if latest["content_qc"].get(
+                    "rejection_reason") == DURATION_REJECTION_REASON else
+                    "validated_content_rejection")
+                status = "retry_pending"
         elif latest["status"] == "generated" and qc_status == "error":
             status, reason = "qc_error", "retry_qc_on_existing_wav"
         elif latest["status"] == "generated":
@@ -272,6 +309,28 @@ def _read_qc_evidence(run_directory, manifest, unit, attempt):
     if binding != expected_binding or evidence.get("policy") != manifest[
             "generation"]["content_qc"]:
         raise GenerationError("Unit QC evidence binding or policy differs.")
+    if evidence.get("evidence_type") == DURATION_EVIDENCE_TYPE:
+        audio = wav_info(run_directory / attempt["output_path"],
+                         attempt["audio"]["sample_rate_hz"])
+        if (manifest["generation"].get("content_retry") != OVERLENGTH_RETRY_POLICY
+                or evidence.get("schema_version") != 2
+                or evidence.get("retry_policy") != OVERLENGTH_RETRY_POLICY
+                or evidence.get("decision") != "rejected"
+                or evidence.get("rejection_reason") != DURATION_REJECTION_REASON
+                or evidence.get("asr_performed") is not False
+                or evidence.get("audio") != audio
+                or audio != attempt["audio"]
+                or evidence.get("max_whole_wav_seconds") != MAX_WHOLE_WAV_SECONDS
+                or audio["duration_seconds"] <= MAX_WHOLE_WAV_SECONDS
+                or not isinstance(evidence.get("created_at_utc"), str)
+                or (qc.get("status") in {"passed", "rejected"} and (
+                    qc.get("status") != "rejected"
+                    or qc.get("rejection_reason") != DURATION_REJECTION_REASON
+                    or qc.get("evidence_sha256") != digest))):
+            raise GenerationError("Unit duration-rejection evidence differs.")
+        return evidence, digest
+    if evidence.get("schema_version") != 1 or "evidence_type" in evidence:
+        raise GenerationError("Unit QC evidence variant is invalid.")
     model = evidence.get("model")
     if (not isinstance(model, dict) or model.get("model_id") != MODEL_ID
             or model.get("resolved_revision") != MODEL_REVISION):
@@ -326,18 +385,73 @@ def _run_qc_impl(run_directory, manifest_path, manifest, unit, attempt,
             "evidence_path": _qc_path(attempt), "evidence_sha256": digest,
             "finished_at_utc": clock(), "recovery": "validated_existing_evidence",
         })
+        if evidence.get("evidence_type") == DURATION_EVIDENCE_TYPE:
+            previous_error = attempt["content_qc"].pop("error", None)
+            if previous_error is not None:
+                attempt["content_qc"].setdefault("error_history", []).append({
+                    **previous_error,
+                    "started_at_utc": attempt["content_qc"].get("started_at_utc"),
+                    "finished_at_utc": attempt["content_qc"].get("finished_at_utc"),
+                })
+            attempt["content_qc"]["rejection_reason"] = DURATION_REJECTION_REASON
         if decision == "passed":
             _select(manifest, unit, attempt, clock, "content_qc_passed")
         save_manifest(manifest_path, manifest)
         return decision
     qc = attempt["content_qc"]
+    previous_qc_error = None
+    if qc.get("error") is not None:
+        previous_qc_error = {
+            **qc["error"], "started_at_utc": qc.get("started_at_utc"),
+            "finished_at_utc": qc.get("finished_at_utc"),
+        }
     qc.update({"status": "running", "started_at_utc": clock()})
     save_manifest(manifest_path, manifest)
     try:
         if attempt["audio"]["duration_seconds"] > MAX_WHOLE_WAV_SECONDS:
-            raise GenerationError(
-                "Unit WAV exceeds the validated 30-second whole-WAV ASR limit."
+            if manifest["generation"].get("content_retry") != OVERLENGTH_RETRY_POLICY:
+                raise GenerationError(
+                    "Unit WAV exceeds the validated 30-second whole-WAV ASR limit."
+                )
+            if previous_qc_error is not None:
+                qc.pop("error")
+                qc.setdefault("error_history", []).append(previous_qc_error)
+            evidence = {
+                "schema_version": 2, "evidence_type": DURATION_EVIDENCE_TYPE,
+                "binding": {
+                    "unit_id": unit["id"], "attempt_id": attempt["id"],
+                    "wav_path": attempt["output_path"],
+                    "wav_sha256": attempt["wav_sha256"],
+                    "normalized_text_sha256": unit["normalized_text_sha256"],
+                },
+                "policy": manifest["generation"]["content_qc"],
+                "retry_policy": manifest["generation"]["content_retry"],
+                "audio": attempt["audio"],
+                "max_whole_wav_seconds": MAX_WHOLE_WAV_SECONDS,
+                "decision": "rejected",
+                "rejection_reason": DURATION_REJECTION_REASON,
+                "asr_performed": False, "created_at_utc": clock(),
+            }
+            evidence_path = run_directory / _qc_path(attempt)
+            temporary = evidence_path.with_suffix(".json.tmp")
+            if evidence_path.exists() or temporary.exists():
+                raise GenerationError("Untracked unit QC evidence already exists.")
+            temporary.write_text(
+                json.dumps(evidence, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+                encoding="utf-8",
             )
+            temporary.replace(evidence_path)
+            verified, digest = _read_qc_evidence(
+                run_directory, manifest, unit, attempt,
+            )
+            qc.update({
+                "status": verified["decision"], "decision": verified["decision"],
+                "rejection_reason": DURATION_REJECTION_REASON,
+                "evidence_path": _qc_path(attempt), "evidence_sha256": digest,
+                "finished_at_utc": clock(),
+            })
+            save_manifest(manifest_path, manifest)
+            return "rejected"
         # Recognition receives only path and WAV hash. Intended text is used below,
         # after the independent worker returns.
         request = audio_request(
@@ -474,6 +588,72 @@ def _recover_or_target_impl(run_directory, manifest, unit, rate, clock):
     return "synthesize"
 
 
+def enable_overlength_retry(run_directory, clock=utc_now):
+    """Explicitly upgrade one failed v1 run after verifying its saved artifacts."""
+    run_directory, manifest_path, manifest = _load(run_directory)
+    generation = manifest.get("generation")
+    if not isinstance(generation, dict):
+        raise GenerationError("Overlength retry requires an existing generated run.")
+    snapshot = run_directory / "manifest.before_overlength_retry_v2.json"
+    if (manifest.get("unit_execution_policy") == OVERLENGTH_EXECUTION_POLICY
+            and generation.get("retry_policy_migration") is not None):
+        migration = generation["retry_policy_migration"]
+        if (not snapshot.is_file() or file_sha256(snapshot)
+                != migration["snapshot_sha256"]):
+            raise GenerationError("Overlength retry migration snapshot differs.")
+        return manifest
+    if (manifest.get("unit_execution_policy") != RETRY_EXECUTION_POLICY
+            or generation.get("content_retry") != CONTENT_RETRY_POLICY
+            or manifest.get("status") != "generation_failed"):
+        raise GenerationError("Overlength retry requires a failed retry-policy v1 run.")
+    rate = generation.get("backend", {}).get("sample_rate_hz")
+    if not isinstance(rate, int) or rate <= 0:
+        raise GenerationError("Overlength retry requires a recorded sample rate.")
+    overlength = False
+    for _, unit in _units(manifest):
+        state = unit["generation"]
+        for attempt in state["attempts"]:
+            if attempt["status"] != "generated":
+                if attempt["status"] == "running":
+                    raise GenerationError("Cannot migrate a running attempt.")
+                continue
+            _verify_unit_artifact(run_directory, attempt, rate)
+            qc = attempt["content_qc"]
+            evidence = _read_qc_evidence(run_directory, manifest, unit, attempt)
+            if qc["status"] in {"passed", "rejected"} and evidence is None:
+                raise GenerationError("Existing QC evidence is missing.")
+            if (qc["status"] == "error" and state["selected_attempt_id"] is None
+                    and attempt["audio"]["duration_seconds"] > MAX_WHOLE_WAV_SECONDS):
+                if evidence is not None:
+                    raise GenerationError("Overlength attempt has conflicting QC evidence.")
+                overlength = True
+        selected = state["selected_attempt_id"]
+        if selected is not None:
+            chosen = next(a for a in state["attempts"] if a["id"] == selected)
+            if chosen["content_qc"]["status"] != "passed":
+                raise GenerationError("Selected unit lacks passed QC.")
+    if not overlength:
+        raise GenerationError("Run has no unresolved verified overlength QC error.")
+    original = manifest_path.read_bytes()
+    if snapshot.exists():
+        if snapshot.read_bytes() != original:
+            raise GenerationError("Overlength retry snapshot conflicts with this manifest.")
+    else:
+        with snapshot.open("xb") as saved:
+            saved.write(original)
+    generation["retry_policy_migration"] = {
+        "old_policy": copy.deepcopy(CONTENT_RETRY_POLICY),
+        "new_policy": copy.deepcopy(OVERLENGTH_RETRY_POLICY),
+        "reason": DURATION_REJECTION_REASON,
+        "at_utc": clock(),
+        "snapshot_sha256": hashlib.sha256(original).hexdigest(),
+    }
+    generation["content_retry"] = copy.deepcopy(OVERLENGTH_RETRY_POLICY)
+    manifest["unit_execution_policy"] = OVERLENGTH_EXECUTION_POLICY
+    save_manifest(manifest_path, manifest)
+    return manifest
+
+
 def _run_attempt(run_directory, manifest_path, manifest, scene, unit,
                  backend, rate, clock):
     with profiling.span("unit.attempt", unit_id=unit["id"]) as timing:
@@ -569,9 +749,9 @@ def generate_units(run_directory, backend, root_seed=None, clock=utc_now,
             "seed_policy": UNIT_SEED_POLICY,
             "rng_semantics": "explicit_per_unit_seed_not_historical_global_stream",
             "content_qc": policy_record(asr_python),
-            "content_retry": dict(CONTENT_RETRY_POLICY),
+            "content_retry": copy.deepcopy(OVERLENGTH_RETRY_POLICY),
         }
-        manifest["unit_execution_policy"] = RETRY_EXECUTION_POLICY
+        manifest["unit_execution_policy"] = OVERLENGTH_EXECUTION_POLICY
         for _, unit in _units(manifest):
             unit["generation"] = {
                 "selected_attempt_id": None, "attempts": [],
@@ -579,7 +759,8 @@ def generate_units(run_directory, backend, root_seed=None, clock=utc_now,
                 "retry_state": {
                     "status": "not_started", "reason": "no_attempts",
                     "attempts_used": 0,
-                    "max_total_attempts": CONTENT_RETRY_POLICY["max_total_attempts_per_unit"],
+                    "max_total_attempts": OVERLENGTH_RETRY_POLICY[
+                        "max_total_attempts_per_unit"],
                     "last_attempt_id": None,
                 },
             }

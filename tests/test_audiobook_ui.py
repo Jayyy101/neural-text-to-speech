@@ -2,17 +2,73 @@
 
 from pathlib import Path
 import queue
+import sys
 import tempfile
+import tkinter as tk
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from src.audiobook_ui import (
-    AudiobookInspector, export_wav, format_elapsed, normalize_wav_filename,
+    AudiobookInspector, format_elapsed, normalize_mp3_filename,
 )
 
 
 class GenerationUiTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32", "requires native Windows Tk")
+    def test_default_layout_keeps_workflow_visible_and_text_resizes(self):
+        root = tk.Tk()
+        try:
+            view = AudiobookInspector(root)
+            root.update()
+            self.assertLessEqual(root.winfo_height(), root.winfo_screenheight() - 100)
+            controls = [view.filename_entry, view.chapter_text,
+                        view.generate_button, view.open_folder_button,
+                        view.generation_progress, view.generation_status,
+                        view.elapsed_label, view.completed_mp3_entry]
+
+            def assert_visible():
+                top = root.winfo_rooty()
+                bottom = top + root.winfo_height()
+                for widget in controls:
+                    with self.subTest(widget=widget):
+                        self.assertGreater(widget.winfo_height(), 1)
+                        self.assertGreaterEqual(widget.winfo_rooty(), top)
+                        self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), bottom)
+
+            assert_visible()
+            self.assertGreaterEqual(view.open_folder_button.winfo_rooty(),
+                                    view.completed_mp3_entry.winfo_rooty()
+                                    + view.completed_mp3_entry.winfo_height())
+            root.geometry("720x620")
+            root.update()
+            assert_visible()
+            short_text_height = view.chapter_text.winfo_height()
+            root.geometry("720x740")
+            root.update()
+            self.assertGreater(view.chapter_text.winfo_height(), short_text_height)
+            assert_visible()
+        finally:
+            root.destroy()
+
+    @unittest.skipUnless(sys.platform == "win32", "requires native Windows Tk")
+    def test_scaled_layout_retains_progress_and_output_at_minimum_size(self):
+        root = tk.Tk()
+        try:
+            root.tk.call("tk", "scaling", 2.0)
+            view = AudiobookInspector(root)
+            minimum_height = root.minsize()[1]
+            root.geometry(f"720x{minimum_height}")
+            root.update()
+            self.assertGreater(view.chapter_text.winfo_height(), 80)
+            bottom = root.winfo_rooty() + root.winfo_height()
+            for widget in (view.generate_button, view.generation_progress,
+                           view.generation_status, view.elapsed_label,
+                           view.completed_mp3_entry, view.open_folder_button):
+                self.assertLessEqual(widget.winfo_rooty() + widget.winfo_height(), bottom)
+        finally:
+            root.destroy()
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -24,20 +80,21 @@ class GenerationUiTests(unittest.TestCase):
         view.generate_button = Mock()
         view.filename_entry = Mock()
         view.output_filename = Mock()
-        view.output_filename.get.return_value = "神通者04.wav"
+        view.output_filename.get.return_value = "神通者04.mp3"
         view.open_folder_button = Mock()
         view.generation_status = Mock()
         view.generation_progress = Mock()
         view.generation_progress.cget.return_value = "indeterminate"
         view.elapsed_time = Mock()
-        view.finished_wav = Mock()
+        view.finished_mp3 = Mock()
         view.job_log = Mock()
         view.launcher = Mock()
         view.launcher.repository_root = self.root
+        view.launcher.request_root = self.root / "ui_requests"
         view.launcher.log_path = self.root / "worker.log"
         view.job_active = False
         view.started_at = None
-        view.requested_filename = "神通者04.wav"
+        view.requested_filename = "神通者04.mp3"
         view.request_job_id = None
         view.launch_pending = False
         view.launch_queue = queue.Queue()
@@ -51,7 +108,7 @@ class GenerationUiTests(unittest.TestCase):
             self.view.generate_audiobook()
         warning.assert_called_once()
         self.view.launcher.start.assert_not_called()
-        self.assertFalse((self.root / "outputs").exists())
+        self.assertFalse(self.view.launcher.request_root.exists())
 
     def test_generate_saves_exact_text_and_starts_one_job(self):
         chapter = "  神通者\r\n第一段。\n\n "
@@ -67,8 +124,7 @@ class GenerationUiTests(unittest.TestCase):
         source, chapter_id, run_id, log = self.view.launcher.start.call_args.args
         self.assertEqual(source.read_bytes(), chapter.encode("utf-8"))
         self.assertEqual(source.name, "source.txt")
-        self.assertEqual(source.parent.parent,
-                         self.root / "outputs" / "ui_requests")
+        self.assertEqual(source.parent.parent, self.view.launcher.request_root)
         self.assertEqual(log, source.parent / "worker.log")
         self.assertEqual(chapter_id, "chapter_" + source.parent.name)
         self.assertEqual(run_id, "run_" + source.parent.name)
@@ -91,52 +147,32 @@ class GenerationUiTests(unittest.TestCase):
 
         self.view._start_launcher = launch_now
         self.view.generate_audiobook()
-        log = next((self.root / "outputs" / "ui_requests").glob("*/worker.log"))
+        log = next(self.view.launcher.request_root.glob("*/worker.log"))
         self.assertIn("technical WSL failure", log.read_text(encoding="utf-8"))
         self.assertFalse(self.view.job_active)
         self.view.generation_status.configure.assert_called_with(text="Failed")
         self.assertNotIn("technical WSL failure", self.view.job_log.set.call_args.args[0])
 
     def test_filename_validation_handles_unicode_extension_and_windows_rules(self):
-        self.assertEqual(normalize_wav_filename(" 神通者04 "), "神通者04.wav")
-        self.assertEqual(normalize_wav_filename("神通者04.WAV"), "神通者04.wav")
-        self.assertEqual(normalize_wav_filename("épisode.wav"), "épisode.wav")
-        for invalid in ("", "   ", "bad:name", "bad/name.wav", "bad\\name.wav",
-                        "a*b.wav", "a?b.wav", "bad\nname.wav", "CON.wav",
-                        "LPT1.wav", "COM¹.wav", "chapter.wav", "track.mp3",
+        self.assertEqual(normalize_mp3_filename(" 神通者04 "), "神通者04.mp3")
+        self.assertEqual(normalize_mp3_filename("神通者04.MP3"), "神通者04.mp3")
+        self.assertEqual(normalize_mp3_filename("épisode.mp3"), "épisode.mp3")
+        for invalid in ("", "   ", "bad:name", "bad/name.mp3", "bad\\name.mp3",
+                        "a*b.mp3", "a?b.mp3", "bad\nname.mp3", "CON.mp3",
+                        "LPT1.mp3", "COM¹.mp3", "track.wav",
                         "bad\u202ename.wav",
                         "trailing. ", "a" * 252):
             with self.subTest(name=invalid), self.assertRaises(ValueError):
-                normalize_wav_filename(invalid)
+                normalize_mp3_filename(invalid)
 
     def test_invalid_filename_does_not_start_generation(self):
         self.view.chapter_text.get.return_value = "正文。"
-        self.view.output_filename.get.return_value = "bad/name.wav"
+        self.view.output_filename.get.return_value = "bad/name.mp3"
         with patch("src.audiobook_ui.messagebox.showwarning") as warning:
             self.view.generate_audiobook()
         warning.assert_called_once()
         self.view.launcher.start.assert_not_called()
-        self.assertFalse((self.root / "outputs").exists())
-
-    def test_export_is_exact_and_never_overwrites_existing_file(self):
-        final_dir = self.root / "final"
-        final_dir.mkdir()
-        canonical = final_dir / "chapter.wav"
-        canonical.write_bytes(b"RIFF\x00\x01\x02\x03")
-        exported = export_wav(canonical, "神通者04")
-        self.assertEqual(exported, final_dir / "神通者04.wav")
-        self.assertEqual(exported.read_bytes(), canonical.read_bytes())
-        exported.write_bytes(b"keep this file")
-        with self.assertRaises(FileExistsError):
-            export_wav(canonical, "神通者04.wav")
-        self.assertEqual(exported.read_bytes(), b"keep this file")
-        self.assertEqual(canonical.read_bytes(), b"RIFF\x00\x01\x02\x03")
-
-        with patch("src.audiobook_ui.shutil.copyfileobj", side_effect=OSError("disk full")):
-            with self.assertRaisesRegex(OSError, "disk full"):
-                export_wav(canonical, "another.wav")
-        self.assertFalse((final_dir / "another.wav").exists())
-        self.assertEqual(canonical.read_bytes(), b"RIFF\x00\x01\x02\x03")
+        self.assertFalse(self.view.launcher.request_root.exists())
 
     def test_final_inspection_exports_after_validation_in_worker_thread(self):
         run_dir = self.root / "run"
@@ -149,7 +185,8 @@ class GenerationUiTests(unittest.TestCase):
             run_directory=run_dir,
         )
         self.view.launcher.run_directory = run_dir
-        with patch("src.audiobook_ui.inspect_run", return_value=inspected) as validator:
+        with patch("src.audiobook_ui.inspect_run", return_value=inspected) as validator, \
+                patch("src.audiobook_ui.export_mp3", return_value=final_dir / "神通者04.mp3") as encoder:
             self.view._start_inspection("final")
             self.view.inspection_thread.join(timeout=2)
         kind, result, exported, error = self.view.inspection_queue.get_nowait()
@@ -157,8 +194,8 @@ class GenerationUiTests(unittest.TestCase):
         self.assertEqual(kind, "final")
         self.assertIs(result, inspected)
         self.assertIsNone(error)
-        self.assertEqual(exported, final_dir / "神通者04.wav")
-        self.assertEqual(exported.read_bytes(), canonical.read_bytes())
+        encoder.assert_called_once_with(canonical, "神通者04.mp3")
+        self.assertEqual(exported, final_dir / "神通者04.mp3")
 
     def test_elapsed_time_updates_and_freezes_on_finish(self):
         self.assertEqual(format_elapsed(5.9), "00:00:05")
@@ -190,16 +227,16 @@ class GenerationUiTests(unittest.TestCase):
         view.inspection_queue.put(("final", SimpleNamespace(
             assembly=SimpleNamespace(playable=True, audio_path=wav),
             run_directory=run_dir,
-        ), run_dir / "final" / "神通者04.wav", None))
+        ), run_dir / "final" / "神通者04.mp3", None))
         view._poll_generation()
         self.assertFalse(view.job_active)
         self.assertEqual(view.completed_run_directory, run_dir)
-        view.finished_wav.set.assert_called_with(str(run_dir / "final" / "神通者04.wav"))
+        view.finished_mp3.set.assert_called_with(str(run_dir / "final" / "神通者04.mp3"))
         view.open_folder_button.configure.assert_called_with(state="normal")
         view.generation_status.configure.assert_called_with(text="Complete")
         view.root.after.assert_not_called()
 
-    def test_failed_process_or_final_artifact_stays_closed(self):
+    def test_failed_process_without_run_stays_closed(self):
         view = self.view
         view.job_active = True
         view.launcher.poll.return_value = 1
@@ -218,6 +255,24 @@ class GenerationUiTests(unittest.TestCase):
         view.generation_status.configure.assert_called_with(text="Failed")
         view.open_folder_button.configure.assert_not_called()
 
+    def test_failed_generation_opens_existing_run_root_and_keeps_mp3_blank(self):
+        view = self.view
+        run = self.root / "failed_run"
+        run.mkdir()
+        view.launcher.run_directory = run
+        view.job_active = True
+        view.launcher.poll.return_value = 1
+        view._poll_generation()
+        self.assertEqual(view.completed_run_directory, run)
+        self.assertEqual(view.open_folder_target, run)
+        self.assertEqual(view.generation_status.configure.call_args.kwargs["text"], "Failed")
+        self.assertIn(str(view.launcher.log_path), view.job_log.set.call_args.args[0])
+        view.finished_mp3.set.assert_not_called()
+        view.open_folder_button.configure.assert_called_with(state="normal")
+        with patch("src.audiobook_ui.os.startfile", create=True) as opener:
+            view.open_folder()
+        opener.assert_called_once_with(run)
+
     def test_export_collision_is_clear_and_preserves_canonical_wav_access(self):
         view = self.view
         view.job_active = True
@@ -230,7 +285,7 @@ class GenerationUiTests(unittest.TestCase):
         view._poll_generation()
         self.assertFalse(view.job_active)
         self.assertEqual(view.completed_run_directory, canonical.parent.parent)
-        view.finished_wav.set.assert_called_with(str(canonical))
+        view.finished_mp3.set.assert_not_called()
         view.open_folder_button.configure.assert_called_with(state="normal")
         self.assertIn("already exists", view.job_log.set.call_args.args[0])
 

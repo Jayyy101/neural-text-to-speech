@@ -17,7 +17,7 @@ from src.audiobook.content_qc import (
 )
 from src.audiobook.manifest import create_planning_run
 from src.audiobook.pipeline import GenerationError
-from src.audiobook.unit_execution import CONTENT_RETRY_POLICY, assemble_units, generate_units
+from src.audiobook.unit_execution import OVERLENGTH_RETRY_POLICY, assemble_units, generate_units
 from src.audiobook.unit_planning import prepare_synthesis_unit_run
 from tests.test_audiobook_unit_planning import FixtureFrontend
 
@@ -274,7 +274,7 @@ class UnitQCTests(unittest.TestCase):
     def test_historical_policy_sidecars_validate_without_v2_reinterpretation(self):
         manifest, _ = self.generate()
         self.assertEqual(manifest["generation"]["content_qc"], policy_record())
-        self.assertEqual(manifest["generation"]["content_retry"], CONTENT_RETRY_POLICY)
+        self.assertEqual(manifest["generation"]["content_retry"], OVERLENGTH_RETRY_POLICY)
         self.assertEqual(assemble_units(self.run_dir)["assembly"]["status"], "assembled")
         backend = self.backend()
         resumed = generate_units(self.run_dir, backend, worker_factory=self.factory())
@@ -389,24 +389,29 @@ class UnitQCTests(unittest.TestCase):
         with self.assertRaisesRegex(GenerationError, "binding or policy differs"):
             generate_units(self.run_dir, self.backend(), worker_factory=self.factory())
 
-    def test_over_validated_whole_wav_limit_is_qc_error_without_retry(self):
+    def test_over_validated_whole_wav_limit_exhausts_without_asr(self):
         backend = FakeBackend(self.frontend_hash, frames=24000 * 31)
         manifest, _ = self.generate(backend=backend)
-        self.assertEqual(len(backend.calls), 2)
+        self.assertEqual(len(backend.calls), 6)
         self.assertEqual(len(self.workers), 0)
         self.assertEqual(manifest["status"], "generation_failed")
         for unit in manifest["scenes"][0]["synthesis_units"]:
-            attempt = unit["generation"]["attempts"][0]
-            self.assertEqual(attempt["status"], "generated")
-            self.assertEqual(attempt["content_qc"]["status"], "error")
-            self.assertIn("30-second", attempt["content_qc"]["error"]["message"])
+            self.assertEqual(unit["generation"]["retry_state"]["status"], "exhausted")
+            for attempt in unit["generation"]["attempts"]:
+                self.assertEqual(attempt["status"], "generated")
+                self.assertEqual(attempt["content_qc"]["status"], "rejected")
+                evidence = json.loads((self.run_dir / attempt["content_qc"][
+                    "evidence_path"]).read_text(encoding="utf-8"))
+                self.assertEqual(evidence["rejection_reason"],
+                                 "wav_exceeds_qc_duration_limit")
+                self.assertIs(evidence["asr_performed"], False)
         resume_backend = self.backend()
         resumed = generate_units(self.run_dir, resume_backend,
                                  worker_factory=self.factory())
         self.assertEqual(resume_backend.calls, [])
         self.assertEqual(len(self.workers), 0)
         self.assertEqual([len(unit["generation"]["attempts"])
-                          for unit in resumed["scenes"][0]["synthesis_units"]], [1, 1])
+                          for unit in resumed["scenes"][0]["synthesis_units"]], [3, 3])
 
 
 class WorkerLifecycleTests(unittest.TestCase):

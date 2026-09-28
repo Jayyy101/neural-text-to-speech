@@ -3,17 +3,20 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from src.audiobook import unit_execution
+from src.audiobook.__main__ import main as cli_main
 from src.audiobook.content_qc import MODEL_ID, MODEL_REVISION, han_tokens
 from src.audiobook.manifest import create_planning_run
 from src.audiobook.pipeline import GenerationError
 from src.audiobook.unit_execution import (
-    CONTENT_RETRY_POLICY, QC_EXECUTION_POLICY, RETRY_EXECUTION_POLICY,
-    assemble_units, derive_unit_seed, generate_units,
+    CONTENT_RETRY_POLICY, OVERLENGTH_RETRY_POLICY, QC_EXECUTION_POLICY,
+    OVERLENGTH_EXECUTION_POLICY, RETRY_EXECUTION_POLICY,
+    assemble_units, derive_unit_seed, enable_overlength_retry, generate_units,
 )
 from src.audiobook.unit_planning import prepare_synthesis_unit_run
 from tests.test_audiobook_content_qc import FakeBackend, recognition
@@ -39,6 +42,16 @@ class ScriptedRetryWorker:
 
     def close(self):
         self.close_calls += 1
+
+
+class SizedBackend(FakeBackend):
+    def __init__(self, frontend_hash, sizes):
+        super().__init__(frontend_hash)
+        self.sizes = sizes
+
+    def generate_unit(self, text, path, seed):
+        self.frames = self.sizes.get((path.parent.parent.name, path.parent.name), 240)
+        return super().generate_unit(text, path, seed)
 
 
 class RetryTests(unittest.TestCase):
@@ -91,8 +104,8 @@ class RetryTests(unittest.TestCase):
 
     def test_first_attempt_passes_without_retry_and_persists_policy(self):
         manifest, backend = self.execute()
-        self.assertEqual(manifest["generation"]["content_retry"], CONTENT_RETRY_POLICY)
-        self.assertEqual(manifest["unit_execution_policy"], RETRY_EXECUTION_POLICY)
+        self.assertEqual(manifest["generation"]["content_retry"], OVERLENGTH_RETRY_POLICY)
+        self.assertEqual(manifest["unit_execution_policy"], OVERLENGTH_EXECUTION_POLICY)
         self.assertEqual(len(backend.calls), 2)
         self.assertEqual(len(self.workers), 1)
         self.assertEqual(len(self.workers[0].requests), 2)
@@ -287,6 +300,152 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(state["attempts"][0]["content_qc"]["status"], "rejected")
         self.assertIsNone(state["selected_attempt_id"])
 
+    def test_exact_duration_limit_uses_normal_asr(self):
+        backend = SizedBackend(self.frontend_hash, {(self.ids[0], "attempt_001"): 720000})
+        manifest, _ = self.execute(backend=backend)
+        self.assertEqual(manifest["status"], "generated")
+        self.assertEqual(len(backend.calls), 2)
+        self.assertEqual(len(self.workers[0].requests), 2)
+        self.assertEqual(self.units(manifest)[0]["generation"]["attempts"][0][
+            "audio"]["duration_seconds"], 30.0)
+
+    def test_one_frame_over_limit_retries_without_asr_for_overlength_wav(self):
+        backend = SizedBackend(self.frontend_hash, {(self.ids[0], "attempt_001"): 720001})
+        manifest, _ = self.execute(backend=backend)
+        state = self.units(manifest)[0]["generation"]
+        self.assertEqual(manifest["status"], "generated")
+        self.assertEqual([a["take_index"] for a in state["attempts"]], [1, 2])
+        self.assertEqual([a["content_qc"]["status"] for a in state["attempts"]],
+                         ["rejected", "passed"])
+        self.assertEqual([r["request_id"] for r in self.workers[0].requests],
+                         [f"{self.ids[0]}:attempt_002", f"{self.ids[1]}:attempt_001"])
+        plan_hash = manifest["synthesis_unit_plan"]["ordered_unit_plan_sha256"]
+        self.assertEqual(state["attempts"][1]["seed"],
+                         derive_unit_seed(19, plan_hash, self.ids[0], 2))
+        evidence = json.loads((self.run_dir / state["attempts"][0]["content_qc"][
+            "evidence_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(evidence["schema_version"], 2)
+        self.assertEqual(evidence["audio"]["frames"], 720001)
+        self.assertEqual(evidence["max_whole_wav_seconds"], 30.0)
+        self.assertIs(evidence["asr_performed"], False)
+        self.assertEqual(assemble_units(self.run_dir)["assembly"]["status"], "assembled")
+
+    def test_real_style_30_36_second_attempt_is_preserved_and_retried(self):
+        backend = SizedBackend(self.frontend_hash, {(self.ids[0], "attempt_001"): 728640})
+        manifest, _ = self.execute(backend=backend)
+        attempts = self.units(manifest)[0]["generation"]["attempts"]
+        self.assertEqual(attempts[0]["audio"]["duration_seconds"], 30.36)
+        self.assertTrue((self.run_dir / attempts[0]["output_path"]).is_file())
+        self.assertEqual(attempts[0]["content_qc"]["rejection_reason"],
+                         "wav_exceeds_qc_duration_limit")
+        self.assertEqual(attempts[1]["content_qc"]["status"], "passed")
+
+    def test_three_overlength_takes_exhaust_and_resume_does_not_add_fourth(self):
+        sizes = {(self.ids[0], f"attempt_{i:03d}"): 720001 for i in range(1, 4)}
+        backend = SizedBackend(self.frontend_hash, sizes)
+        manifest, _ = self.execute(backend=backend)
+        state = self.units(manifest)[0]["generation"]
+        self.assertEqual(manifest["status"], "generation_failed")
+        self.assertEqual(state["retry_state"]["status"], "exhausted")
+        self.assertEqual(len(state["attempts"]), 3)
+        self.assertEqual(len(self.workers[0].requests), 1)
+        with self.assertRaisesRegex(GenerationError, "Every synthesis unit"):
+            assemble_units(self.run_dir)
+        next_backend = self.backend()
+        for _ in range(2):
+            resumed = generate_units(self.run_dir, next_backend,
+                                     worker_factory=self.factory())
+            self.assertEqual(len(self.units(resumed)[0]["generation"]["attempts"]), 3)
+        self.assertEqual(next_backend.calls, [])
+
+    def test_mixed_content_and_duration_rejections_exhaust(self):
+        backend = SizedBackend(self.frontend_hash, {(self.ids[0], "attempt_002"): 720001})
+        manifest, _ = self.execute(self.scripted(["attempt_001", "attempt_003"]),
+                                   backend=backend)
+        state = self.units(manifest)[0]["generation"]
+        self.assertEqual(state["retry_state"]["status"], "exhausted")
+        self.assertEqual(state["retry_state"]["reason"],
+                         "all_allowed_attempts_rejected_for_qc")
+        self.assertEqual([a["take_index"] for a in state["attempts"]], [1, 2, 3])
+        self.assertEqual(len(self.workers[0].requests), 3)
+        with self.assertRaisesRegex(GenerationError, "Every synthesis unit"):
+            assemble_units(self.run_dir)
+
+    def test_duration_evidence_tampering_and_false_pass_fail_closed(self):
+        backend = SizedBackend(self.frontend_hash, {(self.ids[0], "attempt_001"): 720001})
+        manifest, _ = self.execute(backend=backend)
+        attempt = self.units(manifest)[0]["generation"]["attempts"][0]
+        path = self.run_dir / attempt["content_qc"]["evidence_path"]
+        original = path.read_bytes()
+        for mutation in (lambda e: e["audio"].update(frames=720002),
+                         lambda e: e.update(decision="passed")):
+            evidence = json.loads(original)
+            mutation(evidence)
+            path.write_text(json.dumps(evidence, ensure_ascii=False), encoding="utf-8")
+            attempt["content_qc"]["evidence_sha256"] = hashlib.sha256(
+                path.read_bytes()).hexdigest()
+            self.save(manifest)
+            with self.assertRaisesRegex(GenerationError, "duration-rejection evidence"):
+                generate_units(self.run_dir, self.backend(), worker_factory=self.factory())
+        path.write_bytes(original)
+
+    def test_v1_migration_preserves_selected_units_and_old_error(self):
+        sizes = {(self.ids[0], f"attempt_{i:03d}"): 728640 for i in range(1, 4)}
+        manifest, _ = self.execute(backend=SizedBackend(self.frontend_hash, sizes))
+        unit, selected = self.units(manifest)
+        selected_before = json.dumps(selected["generation"], sort_keys=True)
+        state = unit["generation"]
+        first = state["attempts"][0]
+        for prior in state["attempts"][1:]:
+            shutil.rmtree((self.run_dir / prior["output_path"]).parent)
+        (self.run_dir / first["content_qc"]["evidence_path"]).unlink()
+        first["content_qc"] = {"status": "error",
+                               "started_at_utc": "original-start",
+                               "finished_at_utc": "original-finish", "error": {
+            "type": "GenerationError", "message": "original overlength failure"}}
+        state["attempts"] = [first]
+        state["retry_state"] = {"status": "qc_error", "reason": "retry_qc_on_existing_wav",
+                                "attempts_used": 1, "max_total_attempts": 3,
+                                "last_attempt_id": "attempt_001"}
+        manifest["unit_execution_policy"] = RETRY_EXECUTION_POLICY
+        manifest["generation"]["content_retry"] = dict(CONTENT_RETRY_POLICY)
+        self.save(manifest)
+        old_backend = self.backend()
+        old = generate_units(self.run_dir, old_backend, worker_factory=self.factory())
+        self.assertEqual(old_backend.calls, [])
+        self.assertEqual(self.units(old)[0]["generation"]["attempts"][0][
+            "content_qc"]["status"], "error")
+        self.units(old)[0]["generation"]["attempts"][0]["content_qc"] = {
+            "status": "error", "started_at_utc": "original-start",
+            "finished_at_utc": "original-finish", "error": {"type": "GenerationError",
+                                         "message": "original overlength failure"}}
+        self.save(old)
+        before = (self.run_dir / "manifest.json").read_bytes()
+        migrated = enable_overlength_retry(self.run_dir)
+        self.assertEqual(migrated["generation"]["content_retry"], OVERLENGTH_RETRY_POLICY)
+        snapshot = self.run_dir / "manifest.before_overlength_retry_v2.json"
+        self.assertEqual(snapshot.read_bytes(), before)
+        self.assertEqual(enable_overlength_retry(self.run_dir)["unit_execution_policy"],
+                         OVERLENGTH_EXECUTION_POLICY)
+        retry_backend = self.backend()
+        with (patch("src.audiobook.__main__.create_adapter", return_value=retry_backend),
+              patch("src.audiobook.unit_execution.ASRWorkerClient",
+                    side_effect=self.factory())):
+            self.assertEqual(cli_main(["resume", str(self.run_dir),
+                                       "--enable-overlength-retry"]), 0)
+        recovered = json.loads((self.run_dir / "manifest.json").read_text(encoding="utf-8"))
+        state = self.units(recovered)[0]["generation"]
+        self.assertEqual(len(retry_backend.calls), 1)
+        self.assertEqual(len(state["attempts"]), 2)
+        self.assertEqual(state["attempts"][0]["content_qc"]["error_history"][0][
+            "message"], "original overlength failure")
+        self.assertEqual(state["attempts"][0]["content_qc"]["error_history"][0][
+            "started_at_utc"], "original-start")
+        self.assertEqual(state["attempts"][1]["take_index"], 2)
+        self.assertEqual(json.dumps(self.units(recovered)[1]["generation"], sort_keys=True),
+                         selected_before)
+        self.assertEqual(snapshot.read_bytes(), before)
+
     def test_retry_policy_mismatch_and_rejected_evidence_corruption_fail_closed(self):
         manifest, _ = self.execute(self.scripted(["attempt_001", "attempt_002",
                                                "attempt_003"]))
@@ -298,7 +457,7 @@ class RetryTests(unittest.TestCase):
         self.save(manifest)
         with self.assertRaisesRegex(GenerationError, "content-retry policy differs"):
             generate_units(self.run_dir, self.backend(), worker_factory=self.factory())
-        manifest["generation"]["content_retry"] = dict(CONTENT_RETRY_POLICY)
+        manifest["generation"]["content_retry"] = dict(OVERLENGTH_RETRY_POLICY)
         second = self.units(manifest)[0]["generation"]["attempts"][1]
         second["id"] = "attempt_004"
         self.save(manifest)

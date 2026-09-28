@@ -6,63 +6,16 @@ import json
 import os
 from pathlib import Path
 import queue
-import re
 import secrets
-import shutil
 import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
-import unicodedata
 
 from src.audiobook_application import inspect_run, open_audio_file
 from src.audiobook_launcher import AudiobookLauncher
+from src.audiobook_mp3 import export_mp3, normalize_mp3_filename
 from src.audiobook import profiling
-
-
-INVALID_WINDOWS_FILENAME_CHARACTERS = set('<>:"/\\|?*')
-RESERVED_WINDOWS_NAMES = re.compile(r"^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$", re.I)
-
-
-def normalize_wav_filename(raw):
-    """Return one safe Windows filename, without a directory component."""
-    name = unicodedata.normalize("NFC", raw.strip())
-    if not name or any(
-            char in INVALID_WINDOWS_FILENAME_CHARACTERS
-            or unicodedata.category(char) in {"Cc", "Cf"}
-            for char in name):
-        raise ValueError("Enter a WAV filename without Windows-forbidden characters or paths.")
-    if name.lower().endswith(".wav"):
-        name = name[:-4]
-    elif "." in name and not name.startswith("."):
-        raise ValueError("The output filename must end in .wav.")
-    if (not name or name.endswith((" ", "."))
-            or RESERVED_WINDOWS_NAMES.fullmatch(name.split(".", 1)[0].rstrip(" ."))):
-        raise ValueError("Choose a different WAV filename; this name is reserved by Windows.")
-    filename = name + ".wav"
-    if filename.lower() == "chapter.wav":
-        raise ValueError("chapter.wav is reserved for the original audiobook. Choose another name.")
-    if len(filename.encode("utf-16-le")) // 2 > 255:
-        raise ValueError("The WAV filename is too long for Windows.")
-    return filename
-
-
-def export_wav(source_path, filename):
-    """Copy a validated chapter WAV to an exclusive user-facing name."""
-    source = Path(source_path)
-    destination = source.parent / normalize_wav_filename(filename)
-    created = False
-    try:
-        with source.open("rb") as original, destination.open("xb") as exported:
-            created = True
-            shutil.copyfileobj(original, exported, length=1024 * 1024)
-        if destination.stat().st_size != source.stat().st_size:
-            raise OSError("Exported WAV size does not match the original.")
-    except Exception:
-        if created:
-            destination.unlink(missing_ok=True)
-        raise
-    return destination
 
 
 def format_elapsed(seconds):
@@ -119,13 +72,22 @@ class AudiobookInspector:
     def __init__(self, root, initial_directory=None):
         self.root = root
         self.root.title("Audiobook Generator")
-        self.root.geometry("940x760" if initial_directory is None else "1100x960")
-        self.root.minsize(720, 560)
+        scale = float(self.root.tk.call("tk", "scaling"))
+        # Keep the fixed controls visible even when Windows uses larger text scaling.
+        minimum_height = max(620, round(350 + 175 * scale))
+        self.root.minsize(720, minimum_height)
+        if initial_directory is None:
+            width = max(720, min(960, self.root.winfo_screenwidth() - 80))
+            height = max(minimum_height, min(760, self.root.winfo_screenheight() - 100))
+            self.root.geometry(f"{width}x{height}")
+        else:
+            self.root.geometry("1100x960")
         self.run = None
         self.run_directory = Path(initial_directory).resolve() if initial_directory else None
         self.launcher = AudiobookLauncher()
         self.job_active = False
         self.completed_run_directory = None
+        self.open_folder_target = None
         self.inspection_queue = queue.Queue()
         self.inspection_thread = None
         self.launch_queue = queue.Queue()
@@ -147,60 +109,77 @@ class AudiobookInspector:
 
         generation = ttk.Frame(self.root, padding=20)
         generation.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(generation, text="Audiobook Generator", style="Title.TLabel").pack(anchor=tk.W)
-        ttk.Label(generation, text="Paste one chapter and choose its WAV filename.").pack(
-            anchor=tk.W, pady=(2, 18)
+        generation.columnconfigure(0, weight=1)
+        generation.rowconfigure(5, weight=1, minsize=100)
+        ttk.Label(generation, text="Audiobook Generator", style="Title.TLabel").grid(
+            row=0, column=0, sticky=tk.W,
+        )
+        ttk.Label(generation, text="Paste one chapter and choose its MP3 filename.").grid(
+            row=1, column=0, sticky=tk.W, pady=(2, 14),
         )
 
-        ttk.Label(generation, text="WAV filename", style="Section.TLabel").pack(anchor=tk.W)
-        self.output_filename = tk.StringVar(value="audiobook.wav")
+        ttk.Label(generation, text="MP3 filename", style="Section.TLabel").grid(
+            row=2, column=0, sticky=tk.W,
+        )
+        self.output_filename = tk.StringVar(value="audiobook.mp3")
         self.filename_entry = ttk.Entry(generation, textvariable=self.output_filename)
-        self.filename_entry.pack(fill=tk.X, pady=(5, 16))
+        self.filename_entry.grid(row=3, column=0, sticky=tk.EW, pady=(5, 12))
 
-        ttk.Label(generation, text="Chapter text", style="Section.TLabel").pack(anchor=tk.W)
-        text_frame = ttk.Frame(generation)
-        text_frame.pack(fill=tk.BOTH, expand=True, pady=(5, 16))
+        ttk.Label(generation, text="Chapter text", style="Section.TLabel").grid(
+            row=4, column=0, sticky=tk.W,
+        )
+        self.text_frame = ttk.Frame(generation)
+        self.text_frame.columnconfigure(0, weight=1)
+        self.text_frame.rowconfigure(0, weight=1)
+        self.text_frame.grid(row=5, column=0, sticky=tk.NSEW, pady=(5, 12))
         self.chapter_text = tk.Text(
-            text_frame, height=20, wrap=tk.WORD, font=("Microsoft YaHei UI", 11),
+            self.text_frame, height=8, wrap=tk.WORD, font=("Microsoft YaHei UI", 11),
             padx=10, pady=10, undo=True,
         )
-        text_scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.chapter_text.yview)
+        text_scroll = ttk.Scrollbar(self.text_frame, orient=tk.VERTICAL,
+                                    command=self.chapter_text.yview)
         self.chapter_text.configure(yscrollcommand=text_scroll.set)
-        self.chapter_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.chapter_text.grid(row=0, column=0, sticky=tk.NSEW)
+        text_scroll.grid(row=0, column=1, sticky=tk.NS)
 
         controls = ttk.Frame(generation)
-        controls.pack(fill=tk.X)
+        controls.grid(row=6, column=0, sticky=tk.EW)
         self.generate_button = ttk.Button(
             controls, text="Generate Audiobook", command=self.generate_audiobook,
             style="Primary.TButton",
         )
         self.generate_button.pack(side=tk.LEFT)
-        self.open_folder_button = ttk.Button(
-            controls, text="Open Folder", command=self.open_folder, state=tk.DISABLED
-        )
-        self.open_folder_button.pack(side=tk.LEFT, padx=(10, 0))
 
         progress = ttk.LabelFrame(generation, text="Progress", padding=12)
-        progress.pack(fill=tk.X, pady=(20, 0))
+        progress.grid(row=7, column=0, sticky=tk.EW, pady=(16, 0))
+        self.generation_progress = ttk.Progressbar(progress, mode="indeterminate")
+        self.generation_progress.pack(fill=tk.X)
         progress_heading = ttk.Frame(progress)
-        progress_heading.pack(fill=tk.X)
+        progress_heading.pack(fill=tk.X, pady=(10, 0))
         self.generation_status = ttk.Label(
             progress_heading, text="Ready", style="Status.TLabel", anchor=tk.W
         )
         self.generation_status.pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.elapsed_time = tk.StringVar(value="Elapsed 00:00:00")
-        ttk.Label(progress_heading, textvariable=self.elapsed_time).pack(side=tk.RIGHT)
-        self.generation_progress = ttk.Progressbar(progress, mode="indeterminate")
-        self.generation_progress.pack(fill=tk.X, pady=(10, 0))
-        self.finished_wav = tk.StringVar()
-        ttk.Label(generation, text="Completed WAV", style="Section.TLabel").pack(
-            anchor=tk.W, pady=(18, 5)
+        self.elapsed_label = ttk.Label(progress_heading, textvariable=self.elapsed_time)
+        self.elapsed_label.pack(side=tk.RIGHT)
+        self.finished_mp3 = tk.StringVar()
+        ttk.Label(generation, text="Completed MP3", style="Section.TLabel").grid(
+            row=8, column=0, sticky=tk.W, pady=(16, 5),
         )
-        ttk.Entry(generation, textvariable=self.finished_wav, state="readonly").pack(fill=tk.X)
+        self.completed_mp3_entry = ttk.Entry(
+            generation, textvariable=self.finished_mp3, state="readonly",
+        )
+        self.completed_mp3_entry.grid(
+            row=9, column=0, sticky=tk.EW,
+        )
+        self.open_folder_button = ttk.Button(
+            generation, text="Open Folder", command=self.open_folder, state=tk.DISABLED,
+        )
+        self.open_folder_button.grid(row=10, column=0, sticky=tk.W, pady=(10, 0))
         self.job_log = tk.StringVar()
-        ttk.Label(generation, textvariable=self.job_log, anchor=tk.W).pack(
-            fill=tk.X, pady=(8, 0)
+        ttk.Label(generation, textvariable=self.job_log, anchor=tk.W).grid(
+            row=11, column=0, sticky=tk.EW, pady=(8, 0),
         )
 
         if self.run_directory is not None:
@@ -271,6 +250,12 @@ class AudiobookInspector:
             self.elapsed_time.set(f"Elapsed {format_elapsed(time.monotonic() - self.started_at)}")
 
     def _finish_generation(self, status, detail=""):
+        if status == "Failed" and self.completed_run_directory is None:
+            run_directory = getattr(self.launcher, "run_directory", None)
+            if isinstance(run_directory, (str, Path)) and Path(run_directory).is_dir():
+                self.completed_run_directory = Path(run_directory)
+                self.open_folder_target = Path(run_directory)
+                self.open_folder_button.configure(state=tk.NORMAL)
         self._update_elapsed()
         self.job_active = False
         self.generation_progress.stop()
@@ -301,13 +286,13 @@ class AudiobookInspector:
             messagebox.showwarning("Chapter text required", "Paste chapter text before generating.")
             return
         try:
-            filename = normalize_wav_filename(self.output_filename.get())
+            filename = normalize_mp3_filename(self.output_filename.get())
         except ValueError as error:
-            messagebox.showwarning("Invalid WAV filename", str(error))
+            messagebox.showwarning("Invalid MP3 filename", str(error))
             return
         self.output_filename.set(filename)
         job_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f") + "_" + secrets.token_hex(4)
-        request_dir = self.launcher.repository_root / "outputs" / "ui_requests" / job_id
+        request_dir = self.launcher.request_root / job_id
         source_path = request_dir / "source.txt"
         log_path = request_dir / "worker.log"
         profiling.activate(request_dir / "profile" if os.environ.get("TTS_PROFILE") == "1"
@@ -318,7 +303,8 @@ class AudiobookInspector:
         self.started_at = time.monotonic()
         self._update_elapsed()
         self.completed_run_directory = None
-        self.finished_wav.set("")
+        self.open_folder_target = None
+        self.finished_mp3.set("")
         self.open_folder_button.configure(state=tk.DISABLED)
         self.job_active = True
         self.generate_button.configure(state=tk.DISABLED)
@@ -376,7 +362,7 @@ class AudiobookInspector:
                     result = inspect_run(run_directory)
                 if kind == "final" and result.assembly.playable:
                     with profiling.span("ui.named_file_copy", parent_id=parent_id):
-                        exported = export_wav(result.assembly.audio_path, filename)
+                        exported = export_mp3(result.assembly.audio_path, filename)
                     profiling.mark("ui.export_ready", job_id=self.request_job_id)
                 else:
                     exported = None
@@ -415,8 +401,7 @@ class AudiobookInspector:
                 return
             self.launch_pending = False
             if launch_error is not None:
-                log_path = self.launcher.repository_root / "outputs" / "ui_requests"
-                log_path = log_path / self.request_job_id / "worker.log"
+                log_path = self.launcher.request_root / self.request_job_id / "worker.log"
                 logged = self._record_ui_failure(log_path, launch_error)
                 detail = (f"Could not start. Worker log: {log_path}" if logged else
                           "Could not start. Check WSL and output folder access.")
@@ -437,24 +422,26 @@ class AudiobookInspector:
             elif exit_code == 0 and kind == "final":
                 if error is None and inspected.assembly.playable and exported is not None:
                     self.completed_run_directory = inspected.run_directory
-                    self.finished_wav.set(str(exported))
+                    self.open_folder_target = inspected.run_directory / "final"
+                    self.finished_mp3.set(str(exported))
                     self.open_folder_button.configure(state=tk.NORMAL)
                     self._finish_generation("Complete")
                 else:
                     validated = inspected is not None and inspected.assembly.playable
                     if validated:
                         self.completed_run_directory = inspected.run_directory
-                        self.finished_wav.set(str(inspected.assembly.audio_path))
+                        self.open_folder_target = inspected.run_directory / "final"
                         self.open_folder_button.configure(state=tk.NORMAL)
+                    assembly = getattr(inspected, "assembly", None)
                     reason = error or RuntimeError(
-                        getattr(inspected.assembly, "error", None) or "Final WAV is unavailable."
+                        getattr(assembly, "error", None) or "Final WAV is unavailable."
                     )
                     self._record_ui_failure(self.launcher.log_path, reason)
                     if validated and isinstance(error, FileExistsError):
-                        detail = (f"{self.requested_filename} already exists. The original WAV is "
-                                  "available through Open Folder.")
+                        detail = (f"MP3 export failed: {self.requested_filename} already exists. "
+                                  "The original WAV is available through Open Folder.")
                     elif validated:
-                        detail = ("Could not save the requested WAV. The original is available "
+                        detail = ("MP3 export failed. The original WAV is available "
                                   f"through Open Folder. Worker log: {self.launcher.log_path}")
                     else:
                         detail = f"Finished WAV could not be validated. Worker log: {self.launcher.log_path}"
@@ -463,14 +450,16 @@ class AudiobookInspector:
         if self.inspection_thread is None:
             self._start_inspection("final" if exit_code == 0 else "progress")
         if exit_code == 0:
-            self._set_generation_status("Assembling...")
+            self._set_generation_status("Validating WAV and exporting MP3...")
         self.root.after(1000, self._poll_generation)
 
     def open_folder(self):
         if self.completed_run_directory is None:
             return
         try:
-            os.startfile(self.completed_run_directory / "final")  # type: ignore[attr-defined]
+            target = (getattr(self, "open_folder_target", None)
+                      or self.completed_run_directory / "final")
+            os.startfile(target)  # type: ignore[attr-defined]
         except OSError as error:
             messagebox.showerror("Cannot open folder", str(error))
 

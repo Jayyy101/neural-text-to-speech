@@ -12,6 +12,7 @@ from .audiobook import profiling
 DEFAULT_DISTRIBUTION = "Ubuntu-22.04"
 DEFAULT_USER = "jay"
 DEFAULT_PYTHON = "/home/jay/miniconda3/envs/cosyvoice-b/bin/python"
+DEFAULT_RUNTIME_ROOT = Path(r"C:\Users\Jay Ma\TTS_Audiobooks")
 
 
 def windows_to_wsl_path(path, *, distribution=DEFAULT_DISTRIBUTION,
@@ -27,6 +28,7 @@ def windows_to_wsl_path(path, *, distribution=DEFAULT_DISTRIBUTION,
              "--exec", "wslpath", "-u", str(windows)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     if result.returncode:
         detail = result.stderr.decode("utf-8", errors="replace").strip()
@@ -44,12 +46,13 @@ def windows_to_wsl_path(path, *, distribution=DEFAULT_DISTRIBUTION,
 class AudiobookLauncher:
     """Launch at most one active production job from native Windows Python."""
 
-    def __init__(self, repository_root=None, output_root=None, *,
+    def __init__(self, repository_root=None, output_root=None, request_root=None, *,
                  distribution=DEFAULT_DISTRIBUTION, user=DEFAULT_USER,
                  python=DEFAULT_PYTHON, run=subprocess.run,
                  popen=subprocess.Popen, platform=sys.platform):
         self.repository_root = Path(repository_root or Path(__file__).resolve().parents[1])
-        self.output_root = Path(output_root or self.repository_root / "outputs/audiobooks")
+        self.output_root = Path(output_root or DEFAULT_RUNTIME_ROOT / "audiobooks")
+        self.request_root = Path(request_root or DEFAULT_RUNTIME_ROOT / "ui_requests")
         self.distribution = distribution
         self.user = user
         self.python = python

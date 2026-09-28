@@ -163,27 +163,27 @@ class ProfilingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             profiling.activate(temporary)
             launcher = AudiobookLauncher(repository_root=r"C:\TTS Project",
-                                        output_root=r"C:\TTS Project\outputs\audiobooks",
                                         platform="win32")
             with patch("src.audiobook_launcher.windows_to_wsl_path", side_effect=[
                     "/mnt/c/TTS Project",
-                    "/mnt/c/TTS Project/outputs/ui_requests/job/source.txt",
-                    "/mnt/c/TTS Project/outputs/audiobooks"]):
+                    "/mnt/c/Users/Jay Ma/TTS_Audiobooks/ui_requests/job/source.txt",
+                    "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks"]):
                 command = launcher.command(
-                    r"C:\TTS Project\outputs\ui_requests\job\source.txt",
+                    r"C:\Users\Jay Ma\TTS_Audiobooks\ui_requests\job\source.txt",
                     "chapter_job", "run_job")
+            self.stop_writer()
         self.assertIn("/usr/bin/env", command)
         self.assertIn("TTS_PROFILE=1", command)
-        self.assertIn("TTS_PROFILE_DIR=/mnt/c/TTS Project/outputs/ui_requests/job/profile",
+        self.assertIn("TTS_PROFILE_DIR=/mnt/c/Users/Jay Ma/TTS_Audiobooks/ui_requests/job/profile",
                       command)
         self.assertEqual(command[-3:], ["run_job", "--output-root",
-                                        "/mnt/c/TTS Project/outputs/audiobooks"])
+                                        "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks"])
 
     def test_disabled_launcher_passes_no_profile_configuration(self):
         launcher = AudiobookLauncher(repository_root=r"C:\TTS Project", platform="win32")
         with patch("src.audiobook_launcher.windows_to_wsl_path", side_effect=[
                 "/mnt/c/TTS Project", "/mnt/c/TTS Project/source.txt",
-                "/mnt/c/TTS Project/outputs"]):
+                "/mnt/c/Users/Jay Ma/TTS_Audiobooks/audiobooks"]):
             command = launcher.command(r"C:\TTS Project\source.txt", "chapter", "run")
         self.assertNotIn("/usr/bin/env", command)
         self.assertFalse(any("TTS_PROFILE_DIR=" in part for part in command))
